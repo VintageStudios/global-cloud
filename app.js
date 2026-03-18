@@ -1,4 +1,8 @@
 const AUTH_TOKEN_KEY = "global-cloud-auth-token";
+const RAILWAY_API_ORIGIN = "https://global-cloud-production.up.railway.app";
+const USE_SAME_ORIGIN_API = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+    || window.location.hostname.endsWith(".railway.app");
+const API_BASE = USE_SAME_ORIGIN_API ? "" : RAILWAY_API_ORIGIN;
 
 const appState = {
     accounts: [],
@@ -169,14 +173,21 @@ function accountBadgeMarkup(account) {
 }
 
 async function api(path, options = {}) {
-    const response = await fetch(path, {
-        headers: {
-            "Content-Type": "application/json",
-            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-            ...(options.headers || {}),
-        },
-        ...options,
-    });
+    const requestUrl = `${API_BASE}${path}`;
+    let response;
+
+    try {
+        response = await fetch(requestUrl, {
+            headers: {
+                "Content-Type": "application/json",
+                ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+                ...(options.headers || {}),
+            },
+            ...options,
+        });
+    } catch (error) {
+        throw new Error("Failed to fetch. Check that your Railway backend is live and domain is connected.");
+    }
 
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -436,6 +447,7 @@ function renderFeed() {
             ? `
                 <div class="post-upload">
                     ${post.upload.type.startsWith("image/") ? `<img src="${post.upload.url}" alt="${escapeHtml(post.upload.name)}">` : ""}
+                    ${post.upload.type.startsWith("video/") ? `<video controls preload="metadata" src="${post.upload.url}"></video>` : ""}
                     <strong>${escapeHtml(post.upload.name)}</strong>
                 </div>
             `

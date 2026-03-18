@@ -339,6 +339,29 @@ function generateTempPassword() {
 }
 
 app.use(express.json({ limit: "10mb" }));
+app.use((req, res, next) => {
+    const origin = req.headers.origin || "";
+    const allowedOrigins = new Set([
+        "https://app.tylervox.org",
+        "https://global-cloud-production.up.railway.app",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]);
+
+    if (allowedOrigins.has(origin)) {
+        res.header("Access-Control-Allow-Origin", origin);
+        res.header("Vary", "Origin");
+    }
+
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+
+    if (req.method === "OPTIONS") {
+        return res.sendStatus(204);
+    }
+
+    return next();
+});
 app.use(express.static(__dirname));
 
 app.post("/api/auth/register", (req, res) => {

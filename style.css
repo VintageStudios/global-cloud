@@ -855,6 +855,15 @@ textarea {
     margin-bottom: 10px;
 }
 
+.post-upload video {
+    width: 100%;
+    max-height: 360px;
+    border-radius: 14px;
+    display: block;
+    margin-bottom: 10px;
+    background: #000000;
+}
+
 .post-meta .pill {
     background: rgba(21, 34, 53, 0.05);
 }

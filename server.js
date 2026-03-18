@@ -8,6 +8,9 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, "data");
 const DB_PATH = path.join(DATA_DIR, "global-cloud-db.json");
 const OWNER_TEMP_PASSWORD = "GlobalCloudOwner2026!";
+const DEMO_ACCOUNT_IDS = new Set(["mateo-rivera", "priya-sol", "leila-hassan"]);
+const DEMO_COMMUNITY_IDS = new Set(["world-lens", "signal-lab"]);
+const DEMO_POST_IDS = new Set(["post-mateo", "post-priya"]);
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
     const hash = crypto.scryptSync(password, salt, 64).toString("hex");
@@ -52,64 +55,18 @@ const defaultDb = {
             bio: "Platform founder and primary administrator.",
             owner: true,
             verified: true,
-            joinedCommunities: ["cloud-makers", "signal-lab"],
-            passwordHash: hashPassword(OWNER_TEMP_PASSWORD),
-        }),
-        baseAccount({
-            id: "mateo-rivera",
-            name: "Mateo Rivera",
-            email: "mateo@example.com",
-            bio: "Travel creator building with local voices.",
-            owner: false,
-            verified: false,
-            joinedCommunities: ["world-lens"],
-            passwordHash: hashPassword("MateoDemo2026!"),
-        }),
-        baseAccount({
-            id: "priya-sol",
-            name: "Priya Sol",
-            email: "priya@example.com",
-            bio: "AI research and future social systems.",
-            owner: false,
-            verified: false,
-            joinedCommunities: ["signal-lab"],
-            passwordHash: hashPassword("PriyaDemo2026!"),
-        }),
-        baseAccount({
-            id: "leila-hassan",
-            name: "Leila Hassan",
-            email: "leila@example.com",
-            bio: "Community organizer and event host.",
-            owner: false,
-            verified: false,
             joinedCommunities: ["cloud-makers"],
-            passwordHash: hashPassword("LeilaDemo2026!"),
+            passwordHash: hashPassword(OWNER_TEMP_PASSWORD),
         }),
     ],
     communities: [
         {
             id: "cloud-makers",
-            name: "Cloud Makers",
-            topic: "Product Building",
-            description: "Designers and developers shipping openly together.",
+            name: "Global Cloud Updates",
+            topic: "Platform News",
+            description: "Official updates, launch notes, and network announcements from the owner.",
             creatorId: "owner-odell",
-            members: ["owner-odell", "leila-hassan"],
-        },
-        {
-            id: "world-lens",
-            name: "World Lens",
-            topic: "Photography",
-            description: "Photographers documenting everyday life around the world.",
-            creatorId: "mateo-rivera",
-            members: ["mateo-rivera"],
-        },
-        {
-            id: "signal-lab",
-            name: "Signal Lab",
-            topic: "Research",
-            description: "Analysts tracking tech, media, and culture shifts.",
-            creatorId: "priya-sol",
-            members: ["owner-odell", "priya-sol"],
+            members: ["owner-odell"],
         },
     ],
     posts: [
@@ -123,28 +80,6 @@ const defaultDb = {
             upload: null,
             likes: 2700,
             replies: 914,
-        },
-        {
-            id: "post-mateo",
-            authorId: "mateo-rivera",
-            tag: "Local Voices",
-            communityId: "world-lens",
-            content: "Testing a new format where every destination guide is co-written by locals. Global perspective beats tourist perspective every time.",
-            createdAt: "18m ago",
-            upload: null,
-            likes: 984,
-            replies: 203,
-        },
-        {
-            id: "post-priya",
-            authorId: "priya-sol",
-            tag: "Future Social",
-            communityId: "signal-lab",
-            content: "Imagine a social platform that highlights useful ideas instead of outrage. Better discovery, richer context, stronger communities.",
-            createdAt: "34m ago",
-            upload: null,
-            likes: 2400,
-            replies: 1100,
         },
     ],
     notifications: [
@@ -163,20 +98,7 @@ const defaultDb = {
             unread: true,
         },
     ],
-    messages: [
-        {
-            id: "msg-1",
-            sender: "Leila Hassan",
-            body: "The Berlin meetup page is live. Want me to pin it to the community hub?",
-            time: "7 min ago",
-        },
-        {
-            id: "msg-2",
-            sender: "Owen Park",
-            body: "Your concept post was featured in Discover. Comments are moving fast.",
-            time: "19 min ago",
-        },
-    ],
+    messages: [],
     sessions: [],
     liveNotificationIndex: 0,
 };
@@ -195,6 +117,22 @@ function ensureDb() {
     let changed = false;
 
     db.sessions = Array.isArray(db.sessions) ? db.sessions : [];
+
+    const previousAccountCount = (db.accounts || []).length;
+    db.accounts = (db.accounts || []).filter((account) => !DEMO_ACCOUNT_IDS.has(account.id));
+    changed = changed || db.accounts.length !== previousAccountCount;
+
+    const previousCommunityCount = (db.communities || []).length;
+    db.communities = (db.communities || []).filter((community) => !DEMO_COMMUNITY_IDS.has(community.id));
+    changed = changed || db.communities.length !== previousCommunityCount;
+
+    const previousPostCount = (db.posts || []).length;
+    db.posts = (db.posts || []).filter((post) => !DEMO_POST_IDS.has(post.id) && !DEMO_ACCOUNT_IDS.has(post.authorId));
+    changed = changed || db.posts.length !== previousPostCount;
+
+    const previousMessageCount = (db.messages || []).length;
+    db.messages = (db.messages || []).filter((message) => !["Leila Hassan", "Owen Park"].includes(message.sender));
+    changed = changed || db.messages.length !== previousMessageCount;
 
     db.accounts = (db.accounts || []).map((account) => {
         if (account.passwordHash) {
@@ -215,6 +153,17 @@ function ensureDb() {
             passwordHash: hashPassword(`TempPass-${account.id}`),
         };
     });
+
+    db.accounts = db.accounts.map((account) => ({
+        ...account,
+        joinedCommunities: (account.joinedCommunities || []).filter((communityId) => !DEMO_COMMUNITY_IDS.has(communityId)),
+    }));
+
+    const ownerAccount = db.accounts.find((account) => account.id === "owner-odell");
+    if (ownerAccount && !ownerAccount.joinedCommunities.includes("cloud-makers")) {
+        ownerAccount.joinedCommunities.unshift("cloud-makers");
+        changed = true;
+    }
 
     if (changed) {
         fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));

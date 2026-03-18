@@ -214,7 +214,6 @@ function renderAccounts() {
                 <span class="pill">${active.joinedCommunities.length} joined</span>
             </div>
         </div>
-        <button class="toggle-btn active" type="button">Signed In</button>
     `;
     els.accountList.appendChild(item);
 }

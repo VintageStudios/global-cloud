@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Cloud</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="page-shell">
+        <aside class="sidebar left-panel">
+            <div class="brand-card glass">
+                <div class="brand-mark">GC</div>
+                <div>
+                    <p class="eyebrow">Social Platform</p>
+                    <h1>Global Cloud</h1>
+                </div>
+            </div>
+
+            <section class="glass owner-card">
+                <p id="profile-label" class="eyebrow">Active Account</p>
+                <div class="owner-header">
+                    <div id="owner-avatar" class="owner-avatar">O</div>
+                    <div>
+                        <div class="name-row">
+                            <h2 id="owner-name">Odell</h2>
+                            <span id="owner-role-badge" class="badge owner-badge">Owner</span>
+                            <span id="owner-verified-badge" class="badge verified-badge" aria-label="Verified account">Verified</span>
+                        </div>
+                        <p id="owner-email" class="owner-email">odell8933@gmail.com</p>
+                    </div>
+                </div>
+                <p id="owner-copy" class="owner-copy">Platform founder and primary administrator for the Global Cloud network.</p>
+            </section>
+
+            <nav class="menu glass" aria-label="Primary">
+                <a class="menu-item active" href="#feed">Feed</a>
+                <a class="menu-item" href="#accounts">Accounts</a>
+                <a class="menu-item" href="#communities">Communities</a>
+                <a class="menu-item" href="#discover">Discover</a>
+                <a class="menu-item" href="#notifications">Notifications</a>
+            </nav>
+
+            <section class="glass stat-panel">
+                <p class="eyebrow">Network Pulse</p>
+                <div class="stat-row">
+                    <strong id="stat-users">4</strong>
+                    <span>Active accounts</span>
+                </div>
+                <div class="stat-row">
+                    <strong id="stat-communities">3</strong>
+                    <span>Communities live</span>
+                </div>
+                <div class="stat-row">
+                    <strong id="stat-posts">3</strong>
+                    <span>Posts in feed</span>
+                </div>
+            </section>
+        </aside>
+
+        <main class="content">
+            <header class="hero glass">
+                <div class="hero-copy">
+                    <div class="hero-topbar">
+                        <div class="live-indicator">
+                            <span class="live-dot"></span>
+                            <span>Live network activity</span>
+                        </div>
+                        <button id="notification-bell" class="notification-bell" type="button" aria-label="Notification center">
+                            Notifications
+                            <span id="notification-count" class="notification-count">0</span>
+                        </button>
+                    </div>
+                    <p class="eyebrow">Built for global conversations</p>
+                    <h2>Share what matters. Discover what the world is building.</h2>
+                    <p class="hero-text">Global Cloud is now a functional social app demo with account switching, user posts, uploads, community creation, and live notifications all running in the browser.</p>
+                    <div class="hero-actions">
+                        <button id="focus-account" class="primary-btn" type="button">Create Account</button>
+                        <button id="focus-feed" class="secondary-btn" type="button">Explore Live Feed</button>
+                    </div>
+                </div>
+
+                <div class="hero-visual">
+                    <div class="orbit-card">
+                        <span>Current account</span>
+                        <strong id="current-account-label">Odell</strong>
+                    </div>
+                    <div class="orbit-card accent">
+                        <span>Joined communities</span>
+                        <strong id="joined-community-count">2</strong>
+                    </div>
+                    <div class="hero-globe"></div>
+                </div>
+            </header>
+
+            <section class="utility-grid">
+                <section class="glass utility-card" id="accounts">
+                    <div class="section-head">
+                        <div>
+                            <p class="eyebrow">Accounts</p>
+                            <h3>Create and switch accounts</h3>
+                        </div>
+                        <span id="active-account-pill" class="status-pill">Active: Odell</span>
+                    </div>
+
+                    <form id="account-form" class="stack-form">
+                        <input id="account-name" type="text" maxlength="28" placeholder="Display name">
+                        <input id="account-email" type="email" maxlength="64" placeholder="Email address">
+                        <input id="account-bio" type="text" maxlength="90" placeholder="Short bio">
+                        <button class="primary-btn" type="submit">Create Account</button>
+                    </form>
+
+                    <div id="account-list" class="account-list"></div>
+                </section>
+
+                <section class="glass utility-card" id="communities">
+                    <div class="section-head">
+                        <div>
+                            <p class="eyebrow">Communities</p>
+                            <h3>Build your own spaces</h3>
+                        </div>
+                        <span id="community-summary" class="status-pill">3 communities</span>
+                    </div>
+
+                    <form id="community-form" class="stack-form">
+                        <input id="community-name" type="text" maxlength="32" placeholder="Community name">
+                        <input id="community-topic" type="text" maxlength="28" placeholder="Focus or topic">
+                        <textarea id="community-description" rows="3" maxlength="140" placeholder="Describe what your community is about"></textarea>
+                        <button class="primary-btn" type="submit">Create Community</button>
+                    </form>
+
+                    <div id="community-list" class="community-list"></div>
+                </section>
+            </section>
+
+            <section class="composer glass" id="feed">
+                <div class="composer-header">
+                    <div>
+                        <p class="eyebrow">Post to the cloud</p>
+                        <h3>Broadcast your next update</h3>
+                    </div>
+                    <span id="composer-account" class="status-pill">Posting as Odell</span>
+                </div>
+
+                <form id="post-form" class="composer-form">
+                    <div class="split-fields">
+                        <input id="post-tag" type="text" maxlength="24" placeholder="Topic tag" value="Owner Update">
+                        <select id="post-community">
+                            <option value="">Post to everyone</option>
+                        </select>
+                    </div>
+                    <textarea id="post-content" rows="4" maxlength="280" placeholder="What's happening around the world?"></textarea>
+                    <div class="split-fields">
+                        <label class="file-picker">
+                            <span>Upload image or file</span>
+                            <input id="post-upload" type="file" accept="image/*,.pdf,.txt,.doc,.docx">
+                        </label>
+                        <div id="upload-preview" class="upload-preview">No upload selected</div>
+                    </div>
+                    <div class="composer-bar">
+                        <span id="char-count">0 / 280</span>
+                        <button class="primary-btn" type="submit">Publish Post</button>
+                    </div>
+                </form>
+            </section>
+
+            <section class="stories-row" aria-label="Stories">
+                <article class="story-card glass">
+                    <span class="story-badge">Trending</span>
+                    <h3>Creator Launch Week</h3>
+                    <p>New accounts are posting launch notes, demos, and product teasers.</p>
+                </article>
+                <article class="story-card glass">
+                    <span class="story-badge">Live</span>
+                    <h3>Community Growth</h3>
+                    <p>Members can now form their own rooms and gather around shared topics.</p>
+                </article>
+                <article class="story-card glass">
+                    <span class="story-badge">Rising</span>
+                    <h3>Owner Updates</h3>
+                    <p>Live notifications surface account activity, posts, and new community joins.</p>
+                </article>
+            </section>
+
+            <section class="main-grid">
+                <div class="feed-column">
+                    <div class="section-head section-head-feed">
+                        <div>
+                            <p class="eyebrow">Feed</p>
+                            <h3>Latest posts</h3>
+                        </div>
+                    </div>
+                    <section id="feed-list" class="feed-list"></section>
+                </div>
+
+                <aside class="side-column">
+                    <section class="glass side-card" id="discover">
+                        <p class="eyebrow">Discover</p>
+                        <h3>Today in motion</h3>
+                        <ul class="trend-list">
+                            <li><span>#GlobalCloudLaunch</span><strong>+320%</strong></li>
+                            <li><span>#CommunityBuilders</span><strong>+204%</strong></li>
+                            <li><span>#CreatorUploads</span><strong>+166%</strong></li>
+                            <li><span>#OwnerUpdate</span><strong>+121%</strong></li>
+                        </ul>
+                    </section>
+
+                    <section class="glass side-card notification-panel" id="notifications">
+                        <div class="notification-panel-head">
+                            <div>
+                                <p class="eyebrow">Notifications</p>
+                                <h3>Live activity</h3>
+                            </div>
+                            <span id="notification-panel-count" class="status-pill">0 unread</span>
+                        </div>
+                        <div id="notification-list" class="notification-list"></div>
+                    </section>
+
+                    <section class="glass side-card" id="messages">
+                        <p class="eyebrow">Messages</p>
+                        <h3>Inbox snapshot</h3>
+                        <div id="message-list" class="message-list"></div>
+                    </section>
+                </aside>
+            </section>
+        </main>
+    </div>
+
+    <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
+    <script src="app.js"></script>
+</body>
+</html>

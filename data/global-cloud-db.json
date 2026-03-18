@@ -10,7 +10,11 @@
       "joinedCommunities": [
         "cloud-makers"
       ],
-      "passwordHash": "5fc0a2260644c407cf2c30d37ed90339:eae6fee69c5d6c8f6cb5e6195c830b4382dda461413cc017d5e076aef5013aee4302d84bc9b3ac24947060161acc5123d759db823022ff9f997b461aecb358a1"
+      "passwordHash": "9630b46414cc24c6ea112d0bcb06f012:45aa7177f593b58f2630fa4f2eafc87e56f6cfc6b44740ef7623ecea12f2fe42dc6e04aad87477fbbe3d990689408f64f7e450e36b17a440769166ef8bd9e487",
+      "badgeIds": [
+        "founder",
+        "verified-owner"
+      ]
     }
   ],
   "communities": [
@@ -56,5 +60,25 @@
   ],
   "messages": [],
   "liveNotificationIndex": 0,
-  "sessions": []
+  "sessions": [],
+  "badges": [
+    {
+      "id": "founder",
+      "name": "Founder",
+      "color": "gold"
+    },
+    {
+      "id": "verified-owner",
+      "name": "Verified Owner",
+      "color": "blue"
+    },
+    {
+      "id": "moderator",
+      "name": "Moderator",
+      "color": "green"
+    }
+  ],
+  "communityMessages": {
+    "cloud-makers": []
+  }
 }

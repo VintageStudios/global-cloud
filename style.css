@@ -585,6 +585,74 @@ p {
     align-items: stretch;
 }
 
+.chat-panel {
+    padding: 24px;
+}
+
+.chat-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 16px 0 12px;
+}
+
+.chat-toolbar label {
+    color: var(--muted-strong);
+    font-weight: 600;
+}
+
+.chat-toolbar select {
+    max-width: 320px;
+}
+
+.chat-messages {
+    display: grid;
+    gap: 10px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 10px;
+    border: 1px solid rgba(21, 34, 53, 0.08);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.62);
+}
+
+.chat-message {
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(21, 34, 53, 0.08);
+}
+
+.chat-message-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.chat-message-head span {
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+.chat-message p {
+    color: var(--muted-strong);
+    line-height: 1.5;
+}
+
+.chat-form {
+    margin-top: 12px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.chat-form input {
+    flex: 1 1 auto;
+}
+
 .utility-card {
     flex: 1 1 0;
 }
@@ -967,6 +1035,7 @@ textarea {
 
     .split-fields,
     .hero-tools,
+    .chat-form,
     .composer-header,
     .composer-bar,
     .hero-topbar,
@@ -978,6 +1047,15 @@ textarea {
     .badge-row {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .chat-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .chat-toolbar select {
+        max-width: 100%;
     }
 
     .toast-stack {

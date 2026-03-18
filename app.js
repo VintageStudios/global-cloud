@@ -4,12 +4,14 @@ const appState = {
     accounts: [],
     badges: [],
     communities: [],
+    communityMessages: {},
     posts: [],
     notifications: [],
     messages: [],
     liveNotificationIndex: 0,
     activeAccountId: null,
     admin: null,
+    selectedChatCommunityId: "",
 };
 
 const els = {
@@ -47,6 +49,10 @@ const els = {
     badgeList: document.querySelector("#badge-list"),
     adminAccountList: document.querySelector("#admin-account-list"),
     communityList: document.querySelector("#community-list"),
+    chatCommunitySelect: document.querySelector("#chat-community-select"),
+    chatMessages: document.querySelector("#chat-messages"),
+    chatForm: document.querySelector("#chat-form"),
+    chatInput: document.querySelector("#chat-input"),
     feedList: document.querySelector("#feed-list"),
     notificationList: document.querySelector("#notification-list"),
     notificationBell: document.querySelector("#notification-bell"),
@@ -70,6 +76,7 @@ const els = {
 };
 
 let authToken = window.localStorage.getItem(AUTH_TOKEN_KEY) || "";
+const MODERATOR_BADGE_ID = "moderator";
 
 function escapeHtml(value) {
     return String(value)
@@ -113,10 +120,15 @@ function getActiveAccount() {
     return appState.accounts.find((account) => account.id === appState.activeAccountId) || null;
 }
 
+function hasAdminAccess(account) {
+    return Boolean(account && (account.owner || (account.badgeIds || []).includes(MODERATOR_BADGE_ID)));
+}
+
 function syncState(serverState) {
     appState.accounts = serverState.accounts || [];
     appState.badges = serverState.badges || [];
     appState.communities = serverState.communities || [];
+    appState.communityMessages = serverState.communityMessages || {};
     appState.posts = serverState.posts || [];
     appState.notifications = serverState.notifications || [];
     appState.messages = serverState.messages || [];
@@ -188,7 +200,7 @@ function renderSidebarIdentity() {
     els.ownerCopy.textContent = active.bio;
     els.ownerRoleBadge.hidden = !active.owner;
     els.ownerVerifiedBadge.hidden = !active.verified;
-    els.adminPanel.hidden = !active.owner;
+    els.adminPanel.hidden = !hasAdminAccess(active);
 }
 
 function renderStats() {
@@ -348,6 +360,66 @@ function renderCommunities() {
     });
 }
 
+function renderChatCommunityOptions() {
+    const active = getActiveAccount();
+    const joined = appState.communities.filter((community) => active?.joinedCommunities.includes(community.id));
+    const previous = appState.selectedChatCommunityId;
+
+    els.chatCommunitySelect.innerHTML = "";
+
+    joined.forEach((community) => {
+        const option = document.createElement("option");
+        option.value = community.id;
+        option.textContent = community.name;
+        els.chatCommunitySelect.appendChild(option);
+    });
+
+    if (joined.length === 0) {
+        appState.selectedChatCommunityId = "";
+        els.chatCommunitySelect.innerHTML = '<option value="">No joined communities</option>';
+        els.chatCommunitySelect.disabled = true;
+        return;
+    }
+
+    els.chatCommunitySelect.disabled = false;
+    appState.selectedChatCommunityId = joined.some((community) => community.id === previous)
+        ? previous
+        : joined[0].id;
+    els.chatCommunitySelect.value = appState.selectedChatCommunityId;
+}
+
+function renderGroupChat() {
+    els.chatMessages.innerHTML = "";
+    const communityId = appState.selectedChatCommunityId;
+
+    if (!communityId) {
+        els.chatMessages.innerHTML = '<div class="empty-state">Join a community to start group chat.</div>';
+        return;
+    }
+
+    const messages = appState.communityMessages[communityId] || [];
+    if (messages.length === 0) {
+        els.chatMessages.innerHTML = '<div class="empty-state">No messages yet. Start the conversation.</div>';
+        return;
+    }
+
+    messages.forEach((message) => {
+        const author = appState.accounts.find((account) => account.id === message.authorId);
+        const row = document.createElement("article");
+        row.className = "chat-message";
+        row.innerHTML = `
+            <div class="chat-message-head">
+                <strong>${escapeHtml(author?.name || "Unknown")}</strong>
+                <span>${escapeHtml(message.createdAt || "Just now")}</span>
+            </div>
+            <p>${escapeHtml(message.content)}</p>
+        `;
+        els.chatMessages.appendChild(row);
+    });
+
+    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+}
+
 function renderFeed() {
     els.feedList.innerHTML = "";
 
@@ -439,6 +511,8 @@ function renderAll() {
     renderBadges();
     renderAdminAccounts();
     renderCommunities();
+    renderChatCommunityOptions();
+    renderGroupChat();
     renderFeed();
     renderNotifications();
     renderMessages();
@@ -490,7 +564,7 @@ async function buildUploadPayload(file) {
 async function refreshState() {
     const state = await api("/api/state");
     syncState(state);
-    if (getActiveAccount()?.owner) {
+    if (hasAdminAccess(getActiveAccount())) {
         const admin = await api("/api/admin/overview");
         syncAdminState(admin);
     }
@@ -510,7 +584,7 @@ async function handleLogin(event) {
         });
 
         setAuthenticatedSession(result.token, result.account, result.state);
-        if (result.account.owner) {
+        if (hasAdminAccess(result.account)) {
             syncAdminState(await api("/api/admin/overview"));
             renderAll();
         }
@@ -583,12 +657,17 @@ async function handleCreateCommunity(event) {
 
 async function handleCreateBadge(event) {
     event.preventDefault();
+    const name = els.badgeName.value.trim();
+    if (!name) {
+        showToast("Badge name required", "Add a badge name before creating.");
+        return;
+    }
 
     try {
         const admin = await api("/api/admin/badges", {
             method: "POST",
             body: JSON.stringify({
-                name: els.badgeName.value.trim(),
+                name,
                 color: els.badgeColor.value.trim() || "blue",
             }),
         });
@@ -631,6 +710,36 @@ async function handlePostSubmit(event) {
         showToast("Post published", "Your update is now live.");
     } catch (error) {
         showToast("Post failed", error.message);
+    }
+}
+
+async function handleSendChatMessage(event) {
+    event.preventDefault();
+
+    const content = els.chatInput.value.trim();
+    const communityId = appState.selectedChatCommunityId;
+
+    if (!communityId) {
+        showToast("No community selected", "Join a community before sending chat messages.");
+        return;
+    }
+
+    if (!content) {
+        return;
+    }
+
+    try {
+        const state = await api(`/api/communities/${communityId}/messages`, {
+            method: "POST",
+            body: JSON.stringify({ content }),
+        });
+
+        syncState(state);
+        renderChatCommunityOptions();
+        renderGroupChat();
+        els.chatInput.value = "";
+    } catch (error) {
+        showToast("Chat failed", error.message);
     }
 }
 
@@ -723,6 +832,11 @@ function handleUploadPreview() {
     els.uploadPreview.textContent = selectedFile ? `${selectedFile.name} selected` : "No upload selected";
 }
 
+function handleChatCommunityChange() {
+    appState.selectedChatCommunityId = els.chatCommunitySelect.value;
+    renderGroupChat();
+}
+
 async function seedLiveNotification() {
     if (!authToken) {
         return;
@@ -787,7 +901,7 @@ async function bootstrap() {
         const result = await api("/api/auth/me");
         syncState(result.state);
         appState.activeAccountId = result.account.id;
-        if (result.account.owner) {
+        if (hasAdminAccess(result.account)) {
             syncAdminState(await api("/api/admin/overview"));
         }
         setAuthMode(true);
@@ -804,6 +918,8 @@ els.badgeForm.addEventListener("submit", handleCreateBadge);
 els.communityForm.addEventListener("submit", handleCreateCommunity);
 els.postForm.addEventListener("submit", handlePostSubmit);
 els.postUpload.addEventListener("change", handleUploadPreview);
+els.chatCommunitySelect.addEventListener("change", handleChatCommunityChange);
+els.chatForm.addEventListener("submit", handleSendChatMessage);
 els.postContent.addEventListener("input", updateCounts);
 els.notificationBell.addEventListener("click", handleClearNotifications);
 els.adminAccountList.addEventListener("click", handleAdminActions);

@@ -11,6 +11,7 @@ const OWNER_TEMP_PASSWORD = "GlobalCloudOwner2026!";
 const DEMO_ACCOUNT_IDS = new Set(["mateo-rivera", "priya-sol", "leila-hassan"]);
 const DEMO_COMMUNITY_IDS = new Set(["world-lens", "signal-lab"]);
 const DEMO_POST_IDS = new Set(["post-mateo", "post-priya"]);
+const ADMIN_BADGE_ID = "moderator";
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
     const hash = crypto.scryptSync(password, salt, 64).toString("hex");
@@ -63,7 +64,8 @@ const defaultDb = {
     ],
     badges: [
         { id: "founder", name: "Founder", color: "gold" },
-        { id: "verified-owner", name: "Verified Owner", color: "blue" }
+        { id: "verified-owner", name: "Verified Owner", color: "blue" },
+        { id: "moderator", name: "Moderator", color: "green" }
     ],
     communities: [
         {
@@ -105,6 +107,16 @@ const defaultDb = {
         },
     ],
     messages: [],
+    communityMessages: {
+        "cloud-makers": [
+            {
+                id: "chat-1",
+                authorId: "owner-odell",
+                content: "Welcome to the official community chat. Share updates and ideas here.",
+                createdAt: "Just now",
+            },
+        ],
+    },
     sessions: [],
     liveNotificationIndex: 0,
 };
@@ -124,6 +136,9 @@ function ensureDb() {
 
     db.sessions = Array.isArray(db.sessions) ? db.sessions : [];
     db.badges = Array.isArray(db.badges) ? db.badges : JSON.parse(JSON.stringify(defaultDb.badges));
+    db.communityMessages = typeof db.communityMessages === "object" && db.communityMessages !== null
+        ? db.communityMessages
+        : {};
 
     const previousAccountCount = (db.accounts || []).length;
     db.accounts = (db.accounts || []).filter((account) => !DEMO_ACCOUNT_IDS.has(account.id));
@@ -167,10 +182,40 @@ function ensureDb() {
         badgeIds: Array.isArray(account.badgeIds) ? account.badgeIds : [],
     }));
 
+    defaultDb.badges.forEach((defaultBadge) => {
+        if (!db.badges.some((badge) => badge.id === defaultBadge.id)) {
+            db.badges.push(defaultBadge);
+            changed = true;
+        }
+    });
+
+    const allowedCommunityIds = new Set((db.communities || []).map((community) => community.id));
+    Object.keys(db.communityMessages).forEach((communityId) => {
+        if (!allowedCommunityIds.has(communityId)) {
+            delete db.communityMessages[communityId];
+            changed = true;
+        }
+    });
+
+    (db.communities || []).forEach((community) => {
+        if (!Array.isArray(db.communityMessages[community.id])) {
+            db.communityMessages[community.id] = [];
+            changed = true;
+        }
+    });
+
     const ownerAccount = db.accounts.find((account) => account.id === "owner-odell");
     if (ownerAccount && !ownerAccount.joinedCommunities.includes("cloud-makers")) {
         ownerAccount.joinedCommunities.unshift("cloud-makers");
         changed = true;
+    }
+    if (ownerAccount) {
+        ["founder", "verified-owner"].forEach((badgeId) => {
+            if (!ownerAccount.badgeIds.includes(badgeId)) {
+                ownerAccount.badgeIds.push(badgeId);
+                changed = true;
+            }
+        });
     }
 
     if (changed) {
@@ -211,6 +256,7 @@ function buildClientState(db) {
         accounts: db.accounts.map(sanitizeAccount),
         badges: db.badges,
         communities: db.communities,
+        communityMessages: db.communityMessages,
         posts: db.posts,
         notifications: db.notifications,
         messages: db.messages,
@@ -260,6 +306,18 @@ function requireAuth(req, res, next) {
 function requireOwner(req, res, next) {
     if (!req.account.owner) {
         return res.status(403).json({ error: "Owner access required." });
+    }
+
+    return next();
+}
+
+function isAdminAccount(account) {
+    return account.owner || (account.badgeIds || []).includes(ADMIN_BADGE_ID);
+}
+
+function requireAdmin(req, res, next) {
+    if (!isAdminAccount(req.account)) {
+        return res.status(403).json({ error: "Admin access required." });
     }
 
     return next();
@@ -359,11 +417,11 @@ app.post("/api/auth/logout", requireAuth, (req, res) => {
     return res.json({ success: true });
 });
 
-app.get("/api/admin/overview", requireAuth, requireOwner, (req, res) => {
+app.get("/api/admin/overview", requireAuth, requireAdmin, (req, res) => {
     return res.json(buildAdminState(req.db));
 });
 
-app.post("/api/admin/badges", requireAuth, requireOwner, (req, res) => {
+app.post("/api/admin/badges", requireAuth, requireAdmin, (req, res) => {
     const { name, color } = req.body;
 
     if (!name || !color) {
@@ -380,7 +438,7 @@ app.post("/api/admin/badges", requireAuth, requireOwner, (req, res) => {
     return res.status(201).json(buildAdminState(req.db));
 });
 
-app.post("/api/admin/accounts/:id/toggle-badge", requireAuth, requireOwner, (req, res) => {
+app.post("/api/admin/accounts/:id/toggle-badge", requireAuth, requireAdmin, (req, res) => {
     const { badgeId } = req.body;
     const account = req.db.accounts.find((entry) => entry.id === req.params.id);
     const badge = req.db.badges.find((entry) => entry.id === badgeId);
@@ -399,7 +457,7 @@ app.post("/api/admin/accounts/:id/toggle-badge", requireAuth, requireOwner, (req
     return res.json(buildAdminState(req.db));
 });
 
-app.post("/api/admin/accounts/:id/reset-password", requireAuth, requireOwner, (req, res) => {
+app.post("/api/admin/accounts/:id/reset-password", requireAuth, requireAdmin, (req, res) => {
     const account = req.db.accounts.find((entry) => entry.id === req.params.id);
 
     if (!account) {
@@ -418,7 +476,7 @@ app.post("/api/admin/accounts/:id/reset-password", requireAuth, requireOwner, (r
     });
 });
 
-app.post("/api/admin/accounts/:id/revoke-sessions", requireAuth, requireOwner, (req, res) => {
+app.post("/api/admin/accounts/:id/revoke-sessions", requireAuth, requireAdmin, (req, res) => {
     const account = req.db.accounts.find((entry) => entry.id === req.params.id);
 
     if (!account) {
@@ -455,6 +513,7 @@ app.post("/api/communities", requireAuth, (req, res) => {
         creatorId: req.account.id,
         members: [req.account.id],
     });
+    db.communityMessages[id] = [];
 
     if (!req.account.joinedCommunities.includes(id)) {
         req.account.joinedCommunities.unshift(id);
@@ -488,6 +547,56 @@ app.post("/api/communities/:id/toggle-membership", requireAuth, (req, res) => {
 
     writeDb(db);
     return res.json(buildClientState(db));
+});
+
+app.get("/api/communities/:id/messages", requireAuth, (req, res) => {
+    const db = req.db;
+    const community = db.communities.find((entry) => entry.id === req.params.id);
+
+    if (!community) {
+        return res.status(404).json({ error: "Community not found." });
+    }
+
+    if (!community.members.includes(req.account.id)) {
+        return res.status(403).json({ error: "Join this community to view chat." });
+    }
+
+    return res.json({
+        communityId: community.id,
+        messages: db.communityMessages[community.id] || [],
+    });
+});
+
+app.post("/api/communities/:id/messages", requireAuth, (req, res) => {
+    const db = req.db;
+    const { content } = req.body;
+    const community = db.communities.find((entry) => entry.id === req.params.id);
+
+    if (!community) {
+        return res.status(404).json({ error: "Community not found." });
+    }
+
+    if (!community.members.includes(req.account.id)) {
+        return res.status(403).json({ error: "Join this community before chatting." });
+    }
+
+    if (!content || !String(content).trim()) {
+        return res.status(400).json({ error: "Message content is required." });
+    }
+
+    if (!Array.isArray(db.communityMessages[community.id])) {
+        db.communityMessages[community.id] = [];
+    }
+
+    db.communityMessages[community.id].push({
+        id: `chat-${Date.now()}`,
+        authorId: req.account.id,
+        content: String(content).trim(),
+        createdAt: "Just now",
+    });
+
+    writeDb(db);
+    return res.status(201).json(buildClientState(db));
 });
 
 app.post("/api/posts", requireAuth, (req, res) => {

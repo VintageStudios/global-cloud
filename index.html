@@ -183,7 +183,7 @@
                         <p class="eyebrow">Admin</p>
                         <h3>Owner management panel</h3>
                     </div>
-                    <span class="status-pill">Owner only</span>
+                    <span class="status-pill">Owner + Moderator</span>
                 </div>
 
                 <div class="admin-grid">
@@ -196,7 +196,12 @@
                         </div>
                         <form id="badge-form" class="stack-form">
                             <input id="badge-name" type="text" maxlength="24" placeholder="Badge name">
-                            <input id="badge-color" type="text" maxlength="24" placeholder="Badge color label (example: Gold)">
+                            <select id="badge-color">
+                                <option value="blue">Blue</option>
+                                <option value="gold">Gold</option>
+                                <option value="green">Green</option>
+                                <option value="red">Red</option>
+                            </select>
                             <button class="primary-btn" type="submit">Create Badge</button>
                         </form>
                         <div id="badge-list" class="badge-admin-list"></div>
@@ -213,6 +218,25 @@
                         <div id="admin-account-list" class="admin-account-list"></div>
                     </section>
                 </div>
+            </section>
+
+            <section id="group-chat" class="glass chat-panel">
+                <div class="section-head">
+                    <div>
+                        <p class="eyebrow">Group Chat</p>
+                        <h3>Community Rooms</h3>
+                    </div>
+                    <span class="status-pill">Members only</span>
+                </div>
+                <div class="chat-toolbar">
+                    <label for="chat-community-select">Community</label>
+                    <select id="chat-community-select"></select>
+                </div>
+                <div id="chat-messages" class="chat-messages"></div>
+                <form id="chat-form" class="chat-form">
+                    <input id="chat-input" type="text" maxlength="280" placeholder="Write a message to the group">
+                    <button class="primary-btn" type="submit">Send</button>
+                </form>
             </section>
 
             <section class="composer glass" id="feed">

@@ -42,6 +42,7 @@ function baseAccount(data) {
         owner: data.owner,
         verified: data.verified,
         joinedCommunities: data.joinedCommunities,
+        badgeIds: data.badgeIds || [],
         passwordHash: data.passwordHash,
     };
 }
@@ -56,8 +57,13 @@ const defaultDb = {
             owner: true,
             verified: true,
             joinedCommunities: ["cloud-makers"],
+            badgeIds: ["founder", "verified-owner"],
             passwordHash: hashPassword(OWNER_TEMP_PASSWORD),
         }),
+    ],
+    badges: [
+        { id: "founder", name: "Founder", color: "gold" },
+        { id: "verified-owner", name: "Verified Owner", color: "blue" }
     ],
     communities: [
         {
@@ -117,6 +123,7 @@ function ensureDb() {
     let changed = false;
 
     db.sessions = Array.isArray(db.sessions) ? db.sessions : [];
+    db.badges = Array.isArray(db.badges) ? db.badges : JSON.parse(JSON.stringify(defaultDb.badges));
 
     const previousAccountCount = (db.accounts || []).length;
     db.accounts = (db.accounts || []).filter((account) => !DEMO_ACCOUNT_IDS.has(account.id));
@@ -157,6 +164,7 @@ function ensureDb() {
     db.accounts = db.accounts.map((account) => ({
         ...account,
         joinedCommunities: (account.joinedCommunities || []).filter((communityId) => !DEMO_COMMUNITY_IDS.has(communityId)),
+        badgeIds: Array.isArray(account.badgeIds) ? account.badgeIds : [],
     }));
 
     const ownerAccount = db.accounts.find((account) => account.id === "owner-odell");
@@ -201,6 +209,7 @@ function addNotification(db, title, body, time = "Just now") {
 function buildClientState(db) {
     return {
         accounts: db.accounts.map(sanitizeAccount),
+        badges: db.badges,
         communities: db.communities,
         posts: db.posts,
         notifications: db.notifications,
@@ -246,6 +255,28 @@ function requireAuth(req, res, next) {
     req.account = account;
     req.session = session;
     return next();
+}
+
+function requireOwner(req, res, next) {
+    if (!req.account.owner) {
+        return res.status(403).json({ error: "Owner access required." });
+    }
+
+    return next();
+}
+
+function buildAdminState(db) {
+    return {
+        badges: db.badges,
+        accounts: db.accounts.map((account) => ({
+            ...sanitizeAccount(account),
+            activeSessionCount: db.sessions.filter((session) => session.accountId === account.id).length,
+        })),
+    };
+}
+
+function generateTempPassword() {
+    return `GC-${crypto.randomBytes(4).toString("hex")}-Temp!`;
 }
 
 app.use(express.json({ limit: "10mb" }));
@@ -325,6 +356,77 @@ app.post("/api/auth/logout", requireAuth, (req, res) => {
     req.db.sessions = req.db.sessions.filter((entry) => entry.token !== req.session.token);
     writeDb(req.db);
     return res.json({ success: true });
+});
+
+app.get("/api/admin/overview", requireAuth, requireOwner, (req, res) => {
+    return res.json(buildAdminState(req.db));
+});
+
+app.post("/api/admin/badges", requireAuth, requireOwner, (req, res) => {
+    const { name, color } = req.body;
+
+    if (!name || !color) {
+        return res.status(400).json({ error: "Badge name and color are required." });
+    }
+
+    const id = slugify(name);
+    if (req.db.badges.some((badge) => badge.id === id)) {
+        return res.status(409).json({ error: "That badge already exists." });
+    }
+
+    req.db.badges.push({ id, name, color: String(color).toLowerCase() });
+    writeDb(req.db);
+    return res.status(201).json(buildAdminState(req.db));
+});
+
+app.post("/api/admin/accounts/:id/toggle-badge", requireAuth, requireOwner, (req, res) => {
+    const { badgeId } = req.body;
+    const account = req.db.accounts.find((entry) => entry.id === req.params.id);
+    const badge = req.db.badges.find((entry) => entry.id === badgeId);
+
+    if (!account || !badge) {
+        return res.status(404).json({ error: "Account or badge not found." });
+    }
+
+    if (account.badgeIds.includes(badgeId)) {
+        account.badgeIds = account.badgeIds.filter((id) => id !== badgeId);
+    } else {
+        account.badgeIds.push(badgeId);
+    }
+
+    writeDb(req.db);
+    return res.json(buildAdminState(req.db));
+});
+
+app.post("/api/admin/accounts/:id/reset-password", requireAuth, requireOwner, (req, res) => {
+    const account = req.db.accounts.find((entry) => entry.id === req.params.id);
+
+    if (!account) {
+        return res.status(404).json({ error: "Account not found." });
+    }
+
+    const temporaryPassword = generateTempPassword();
+    account.passwordHash = hashPassword(temporaryPassword);
+    req.db.sessions = req.db.sessions.filter((session) => session.accountId !== account.id);
+    writeDb(req.db);
+
+    return res.json({
+        accountId: account.id,
+        temporaryPassword,
+        admin: buildAdminState(req.db),
+    });
+});
+
+app.post("/api/admin/accounts/:id/revoke-sessions", requireAuth, requireOwner, (req, res) => {
+    const account = req.db.accounts.find((entry) => entry.id === req.params.id);
+
+    if (!account) {
+        return res.status(404).json({ error: "Account not found." });
+    }
+
+    req.db.sessions = req.db.sessions.filter((session) => session.accountId !== account.id);
+    writeDb(req.db);
+    return res.json(buildAdminState(req.db));
 });
 
 app.get("/api/state", requireAuth, (req, res) => {

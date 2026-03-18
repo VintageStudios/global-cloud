@@ -84,6 +84,7 @@
                 <a class="menu-item active" href="#feed">Feed</a>
                 <a class="menu-item" href="#accounts">Accounts</a>
                 <a class="menu-item" href="#communities">Communities</a>
+                <a class="menu-item" href="#admin">Admin</a>
                 <a class="menu-item" href="#discover">Discover</a>
                 <a class="menu-item" href="#notifications">Notifications</a>
             </nav>
@@ -174,6 +175,44 @@
 
                     <div id="community-list" class="community-list"></div>
                 </section>
+            </section>
+
+            <section id="admin-panel" class="glass admin-panel" hidden>
+                <div class="section-head">
+                    <div>
+                        <p class="eyebrow">Admin</p>
+                        <h3>Owner management panel</h3>
+                    </div>
+                    <span class="status-pill">Owner only</span>
+                </div>
+
+                <div class="admin-grid">
+                    <section class="admin-card">
+                        <div class="section-head">
+                            <div>
+                                <p class="eyebrow">Badges</p>
+                                <h4>Create and assign badges</h4>
+                            </div>
+                        </div>
+                        <form id="badge-form" class="stack-form">
+                            <input id="badge-name" type="text" maxlength="24" placeholder="Badge name">
+                            <input id="badge-color" type="text" maxlength="24" placeholder="Badge color label (example: Gold)">
+                            <button class="primary-btn" type="submit">Create Badge</button>
+                        </form>
+                        <div id="badge-list" class="badge-admin-list"></div>
+                    </section>
+
+                    <section class="admin-card">
+                        <div class="section-head">
+                            <div>
+                                <p class="eyebrow">Accounts</p>
+                                <h4>Manage members and recovery</h4>
+                            </div>
+                        </div>
+                        <p class="admin-note">For security, passwords are never shown. You can review emails, active sessions, force sign-out, and generate a temporary replacement password.</p>
+                        <div id="admin-account-list" class="admin-account-list"></div>
+                    </section>
+                </div>
             </section>
 
             <section class="composer glass" id="feed">

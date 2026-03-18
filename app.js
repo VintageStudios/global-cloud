@@ -2,12 +2,14 @@ const AUTH_TOKEN_KEY = "global-cloud-auth-token";
 
 const appState = {
     accounts: [],
+    badges: [],
     communities: [],
     posts: [],
     notifications: [],
     messages: [],
     liveNotificationIndex: 0,
     activeAccountId: null,
+    admin: null,
 };
 
 const els = {
@@ -38,6 +40,12 @@ const els = {
     composerAccount: document.querySelector("#composer-account"),
     communitySummary: document.querySelector("#community-summary"),
     accountList: document.querySelector("#account-list"),
+    adminPanel: document.querySelector("#admin-panel"),
+    badgeForm: document.querySelector("#badge-form"),
+    badgeName: document.querySelector("#badge-name"),
+    badgeColor: document.querySelector("#badge-color"),
+    badgeList: document.querySelector("#badge-list"),
+    adminAccountList: document.querySelector("#admin-account-list"),
     communityList: document.querySelector("#community-list"),
     feedList: document.querySelector("#feed-list"),
     notificationList: document.querySelector("#notification-list"),
@@ -107,11 +115,19 @@ function getActiveAccount() {
 
 function syncState(serverState) {
     appState.accounts = serverState.accounts || [];
+    appState.badges = serverState.badges || [];
     appState.communities = serverState.communities || [];
     appState.posts = serverState.posts || [];
     appState.notifications = serverState.notifications || [];
     appState.messages = serverState.messages || [];
     appState.liveNotificationIndex = serverState.liveNotificationIndex || 0;
+}
+
+function syncAdminState(adminState) {
+    appState.admin = adminState;
+    if (adminState?.badges) {
+        appState.badges = adminState.badges;
+    }
 }
 
 function updateCounts() {
@@ -126,6 +142,14 @@ function accountBadgeMarkup(account) {
     if (account.verified) {
         markup += '<span class="badge verified-badge" aria-label="Verified account">Verified</span>';
     }
+
+    (account.badgeIds || [])
+        .map((badgeId) => appState.badges.find((badge) => badge.id === badgeId))
+        .filter(Boolean)
+        .forEach((badge) => {
+            markup += `<span class="badge-swatch ${badgeColorClass(badge.color)}">${escapeHtml(badge.name)}</span>`;
+        });
+
     return markup;
 }
 
@@ -164,6 +188,7 @@ function renderSidebarIdentity() {
     els.ownerCopy.textContent = active.bio;
     els.ownerRoleBadge.hidden = !active.owner;
     els.ownerVerifiedBadge.hidden = !active.verified;
+    els.adminPanel.hidden = !active.owner;
 }
 
 function renderStats() {
@@ -216,6 +241,78 @@ function renderAccounts() {
         </div>
     `;
     els.accountList.appendChild(item);
+}
+
+function badgeColorClass(color) {
+    const safe = String(color || "").toLowerCase();
+    return ["gold", "blue", "green", "red"].includes(safe) ? `badge-color-${safe}` : "";
+}
+
+function renderBadges() {
+    els.badgeList.innerHTML = "";
+
+    if (!appState.badges.length) {
+        els.badgeList.innerHTML = '<div class="empty-state">No badges created yet.</div>';
+        return;
+    }
+
+    appState.badges.forEach((badge) => {
+        const row = document.createElement("div");
+        row.className = "badge-row";
+        row.innerHTML = `
+            <strong>${escapeHtml(badge.name)}</strong>
+            <span class="badge-swatch ${badgeColorClass(badge.color)}">${escapeHtml(badge.color)}</span>
+        `;
+        els.badgeList.appendChild(row);
+    });
+}
+
+function renderAdminAccounts() {
+    const active = getActiveAccount();
+    els.adminAccountList.innerHTML = "";
+
+    if (!active?.owner) {
+        return;
+    }
+
+    const accounts = appState.admin?.accounts || appState.accounts;
+
+    accounts.forEach((account) => {
+        const item = document.createElement("article");
+        item.className = "admin-account-item";
+
+        const options = appState.badges.map((badge) => `<option value="${badge.id}">${escapeHtml(badge.name)}</option>`).join("");
+        const accountBadges = (account.badgeIds || [])
+            .map((badgeId) => appState.badges.find((badge) => badge.id === badgeId))
+            .filter(Boolean)
+            .map((badge) => `<span class="badge-swatch ${badgeColorClass(badge.color)}">${escapeHtml(badge.name)}</span>`)
+            .join("");
+
+        item.innerHTML = `
+            <div class="admin-account-head">
+                <div>
+                    <div class="name-row">
+                        <h4>${escapeHtml(account.name)}</h4>
+                        ${accountBadgeMarkup(account)}
+                    </div>
+                    <p class="admin-account-meta">${escapeHtml(account.email)}</p>
+                    <p class="admin-account-meta">${(account.activeSessionCount ?? 0)} active sessions</p>
+                </div>
+                <div class="badge-chip-row">${accountBadges || '<span class="pill">No extra badges</span>'}</div>
+            </div>
+            <div class="admin-account-actions">
+                <select class="admin-select" data-badge-account="${account.id}">
+                    <option value="">Select badge</option>
+                    ${options}
+                </select>
+                <button class="ghost-btn" data-assign-badge="${account.id}" type="button">Toggle Badge</button>
+                <button class="ghost-btn" data-revoke-sessions="${account.id}" type="button">Revoke Sessions</button>
+                <button class="primary-btn" data-reset-password="${account.id}" type="button">Temp Password</button>
+            </div>
+        `;
+
+        els.adminAccountList.appendChild(item);
+    });
 }
 
 function renderCommunities() {
@@ -339,6 +436,8 @@ function renderAll() {
     renderStats();
     renderCommunitySelect();
     renderAccounts();
+    renderBadges();
+    renderAdminAccounts();
     renderCommunities();
     renderFeed();
     renderNotifications();
@@ -391,6 +490,10 @@ async function buildUploadPayload(file) {
 async function refreshState() {
     const state = await api("/api/state");
     syncState(state);
+    if (getActiveAccount()?.owner) {
+        const admin = await api("/api/admin/overview");
+        syncAdminState(admin);
+    }
     renderAll();
 }
 
@@ -407,6 +510,10 @@ async function handleLogin(event) {
         });
 
         setAuthenticatedSession(result.token, result.account, result.state);
+        if (result.account.owner) {
+            syncAdminState(await api("/api/admin/overview"));
+            renderAll();
+        }
         els.loginForm.reset();
         showToast("Logged in", `Welcome back, ${result.account.name}.`);
     } catch (error) {
@@ -471,6 +578,28 @@ async function handleCreateCommunity(event) {
         showToast("Community created", "Your new community is live.");
     } catch (error) {
         showToast("Community failed", error.message);
+    }
+}
+
+async function handleCreateBadge(event) {
+    event.preventDefault();
+
+    try {
+        const admin = await api("/api/admin/badges", {
+            method: "POST",
+            body: JSON.stringify({
+                name: els.badgeName.value.trim(),
+                color: els.badgeColor.value.trim() || "blue",
+            }),
+        });
+
+        syncAdminState(admin);
+        renderBadges();
+        renderAdminAccounts();
+        els.badgeForm.reset();
+        showToast("Badge created", "The new badge is ready to assign.");
+    } catch (error) {
+        showToast("Badge failed", error.message);
     }
 }
 
@@ -539,6 +668,56 @@ async function handleCommunityActions(event) {
     }
 }
 
+async function handleAdminActions(event) {
+    const assignButton = event.target.closest("[data-assign-badge]");
+    const revokeButton = event.target.closest("[data-revoke-sessions]");
+    const resetButton = event.target.closest("[data-reset-password]");
+
+    try {
+        if (assignButton) {
+            const accountId = assignButton.dataset.assignBadge;
+            const select = document.querySelector(`[data-badge-account="${accountId}"]`);
+            if (!select?.value) {
+                showToast("Select a badge", "Choose a badge before assigning it.");
+                return;
+            }
+
+            const admin = await api(`/api/admin/accounts/${accountId}/toggle-badge`, {
+                method: "POST",
+                body: JSON.stringify({ badgeId: select.value }),
+            });
+            syncAdminState(admin);
+            renderAdminAccounts();
+            renderBadges();
+            showToast("Badge updated", "The badge assignment was updated.");
+            return;
+        }
+
+        if (revokeButton) {
+            const admin = await api(`/api/admin/accounts/${revokeButton.dataset.revokeSessions}/revoke-sessions`, {
+                method: "POST",
+                body: JSON.stringify({}),
+            });
+            syncAdminState(admin);
+            renderAdminAccounts();
+            showToast("Sessions revoked", "That account has been signed out everywhere.");
+            return;
+        }
+
+        if (resetButton) {
+            const result = await api(`/api/admin/accounts/${resetButton.dataset.resetPassword}/reset-password`, {
+                method: "POST",
+                body: JSON.stringify({}),
+            });
+            syncAdminState(result.admin);
+            renderAdminAccounts();
+            showToast("Temporary password created", `New temporary password: ${result.temporaryPassword}`);
+        }
+    } catch (error) {
+        showToast("Admin action failed", error.message);
+    }
+}
+
 function handleUploadPreview() {
     const selectedFile = els.postUpload.files[0];
     els.uploadPreview.textContent = selectedFile ? `${selectedFile.name} selected` : "No upload selected";
@@ -581,6 +760,9 @@ async function bootstrap() {
         const result = await api("/api/auth/me");
         syncState(result.state);
         appState.activeAccountId = result.account.id;
+        if (result.account.owner) {
+            syncAdminState(await api("/api/admin/overview"));
+        }
         setAuthMode(true);
         renderAll();
     } catch (error) {
@@ -591,11 +773,13 @@ async function bootstrap() {
 els.loginForm.addEventListener("submit", handleLogin);
 els.registerForm.addEventListener("submit", handleRegister);
 els.logoutButton.addEventListener("click", handleLogout);
+els.badgeForm.addEventListener("submit", handleCreateBadge);
 els.communityForm.addEventListener("submit", handleCreateCommunity);
 els.postForm.addEventListener("submit", handlePostSubmit);
 els.postUpload.addEventListener("change", handleUploadPreview);
 els.postContent.addEventListener("input", updateCounts);
 els.notificationBell.addEventListener("click", handleClearNotifications);
+els.adminAccountList.addEventListener("click", handleAdminActions);
 els.communityList.addEventListener("click", handleCommunityActions);
 els.focusAccount.addEventListener("click", () => {
     document.querySelector("#communities").scrollIntoView({ behavior: "smooth" });

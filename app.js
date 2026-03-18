@@ -47,6 +47,9 @@ const els = {
     badgeName: document.querySelector("#badge-name"),
     badgeColor: document.querySelector("#badge-color"),
     badgeList: document.querySelector("#badge-list"),
+    adminNotificationForm: document.querySelector("#admin-notification-form"),
+    adminNotificationTitle: document.querySelector("#admin-notification-title"),
+    adminNotificationBody: document.querySelector("#admin-notification-body"),
     adminAccountList: document.querySelector("#admin-account-list"),
     communityList: document.querySelector("#community-list"),
     chatCommunitySelect: document.querySelector("#chat-community-select"),
@@ -682,6 +685,35 @@ async function handleCreateBadge(event) {
     }
 }
 
+async function handleCreateAdminNotification(event) {
+    event.preventDefault();
+
+    const title = els.adminNotificationTitle.value.trim();
+    const body = els.adminNotificationBody.value.trim();
+
+    if (!title || !body) {
+        showToast("Missing fields", "Add a title and message before sending.");
+        return;
+    }
+
+    try {
+        const result = await api("/api/admin/notifications", {
+            method: "POST",
+            body: JSON.stringify({ title, body }),
+        });
+
+        syncState(result.state);
+        if (result.admin) {
+            syncAdminState(result.admin);
+        }
+        renderAll();
+        els.adminNotificationForm.reset();
+        showToast("Notification sent", "Your custom notification is now live.");
+    } catch (error) {
+        showToast("Notification failed", error.message);
+    }
+}
+
 async function handlePostSubmit(event) {
     event.preventDefault();
 
@@ -837,45 +869,6 @@ function handleChatCommunityChange() {
     renderGroupChat();
 }
 
-async function seedLiveNotification() {
-    if (!authToken) {
-        return;
-    }
-
-    try {
-        const active = getActiveAccount();
-
-        if (!active) {
-            return;
-        }
-
-        if (active.owner) {
-            const previousCount = appState.notifications.length;
-            const state = await api("/api/notifications/live", {
-                method: "POST",
-                body: JSON.stringify({}),
-            });
-
-            syncState(state);
-            const admin = await api("/api/admin/overview");
-            syncAdminState(admin);
-            renderAll();
-
-            if (appState.notifications.length > previousCount) {
-                const newest = appState.notifications[0];
-                showToast(newest.title, newest.body);
-            }
-            return;
-        }
-
-        await refreshState();
-    } catch (error) {
-        if (String(error.message).includes("Authentication required")) {
-            clearAuthenticatedSession();
-        }
-    }
-}
-
 async function pollLiveState() {
     if (!authToken) {
         return;
@@ -915,6 +908,7 @@ els.loginForm.addEventListener("submit", handleLogin);
 els.registerForm.addEventListener("submit", handleRegister);
 els.logoutButton.addEventListener("click", handleLogout);
 els.badgeForm.addEventListener("submit", handleCreateBadge);
+els.adminNotificationForm.addEventListener("submit", handleCreateAdminNotification);
 els.communityForm.addEventListener("submit", handleCreateCommunity);
 els.postForm.addEventListener("submit", handlePostSubmit);
 els.postUpload.addEventListener("change", handleUploadPreview);
@@ -937,4 +931,3 @@ bootstrap().catch((error) => {
 });
 
 window.setInterval(pollLiveState, 8000);
-window.setInterval(seedLiveNotification, 18000);

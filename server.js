@@ -90,22 +90,7 @@ const defaultDb = {
             replies: 914,
         },
     ],
-    notifications: [
-        {
-            id: "note-1",
-            title: "Owner account active",
-            body: "Your Global Cloud owner profile is visible with badges.",
-            time: "Just now",
-            unread: true,
-        },
-        {
-            id: "note-2",
-            title: "Communities live",
-            body: "Members can now create and join communities.",
-            time: "4 min ago",
-            unread: true,
-        },
-    ],
+    notifications: [],
     messages: [],
     communityMessages: {
         "cloud-makers": [
@@ -136,6 +121,7 @@ function ensureDb() {
 
     db.sessions = Array.isArray(db.sessions) ? db.sessions : [];
     db.badges = Array.isArray(db.badges) ? db.badges : JSON.parse(JSON.stringify(defaultDb.badges));
+    db.notifications = Array.isArray(db.notifications) ? db.notifications : [];
     db.communityMessages = typeof db.communityMessages === "object" && db.communityMessages !== null
         ? db.communityMessages
         : {};
@@ -155,6 +141,10 @@ function ensureDb() {
     const previousMessageCount = (db.messages || []).length;
     db.messages = (db.messages || []).filter((message) => !["Leila Hassan", "Owen Park"].includes(message.sender));
     changed = changed || db.messages.length !== previousMessageCount;
+
+    const previousNotificationCount = db.notifications.length;
+    db.notifications = db.notifications.filter((notification) => !isAutoNotification(notification));
+    changed = changed || db.notifications.length !== previousNotificationCount;
 
     db.accounts = (db.accounts || []).map((account) => {
         if (account.passwordHash) {
@@ -249,6 +239,17 @@ function addNotification(db, title, body, time = "Just now") {
         time,
         unread: true,
     });
+}
+
+function isAutoNotification(notification) {
+    const autoTitles = new Set([
+        "Owner account active",
+        "Communities live",
+        "New follower request",
+        "Community spike",
+        "Upload received",
+    ]);
+    return autoTitles.has(String(notification?.title || ""));
 }
 
 function buildClientState(db) {
@@ -436,6 +437,22 @@ app.post("/api/admin/badges", requireAuth, requireAdmin, (req, res) => {
     req.db.badges.push({ id, name, color: String(color).toLowerCase() });
     writeDb(req.db);
     return res.status(201).json(buildAdminState(req.db));
+});
+
+app.post("/api/admin/notifications", requireAuth, requireOwner, (req, res) => {
+    const title = String(req.body?.title || "").trim();
+    const body = String(req.body?.body || "").trim();
+
+    if (!title || !body) {
+        return res.status(400).json({ error: "Notification title and message are required." });
+    }
+
+    addNotification(req.db, title, body);
+    writeDb(req.db);
+    return res.status(201).json({
+        state: buildClientState(req.db),
+        admin: buildAdminState(req.db),
+    });
 });
 
 app.post("/api/admin/accounts/:id/toggle-badge", requireAuth, requireAdmin, (req, res) => {
@@ -633,29 +650,6 @@ app.post("/api/notifications/clear", requireAuth, (req, res) => {
         ...notification,
         unread: false,
     }));
-    writeDb(req.db);
-    return res.json(buildClientState(req.db));
-});
-
-app.post("/api/notifications/live", requireAuth, requireOwner, (req, res) => {
-    const messages = [
-        {
-            title: "New follower request",
-            body: "A member just requested to follow the active account.",
-        },
-        {
-            title: "Community spike",
-            body: "A community you joined is seeing a wave of new posts.",
-        },
-        {
-            title: "Upload received",
-            body: "A creator just shared a fresh file in the main feed.",
-        },
-    ];
-
-    const next = messages[req.db.liveNotificationIndex] || messages[0];
-    req.db.liveNotificationIndex = (req.db.liveNotificationIndex + 1) % messages.length;
-    addNotification(req.db, next.title, next.body);
     writeDb(req.db);
     return res.json(buildClientState(req.db));
 });

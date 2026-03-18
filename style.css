@@ -911,6 +911,12 @@ textarea {
     margin: 0 0 16px;
 }
 
+.admin-divider {
+    height: 1px;
+    margin: 18px 0;
+    background: rgba(21, 34, 53, 0.1);
+}
+
 .badge-chip-row {
     display: flex;
     flex-wrap: wrap;

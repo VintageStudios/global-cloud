@@ -42,22 +42,7 @@
       "replies": 914
     }
   ],
-  "notifications": [
-    {
-      "id": "note-1",
-      "title": "Owner account active",
-      "body": "Your Global Cloud owner profile is visible with badges.",
-      "time": "Just now",
-      "unread": true
-    },
-    {
-      "id": "note-2",
-      "title": "Communities live",
-      "body": "Members can now create and join communities.",
-      "time": "4 min ago",
-      "unread": true
-    }
-  ],
+  "notifications": [],
   "messages": [],
   "liveNotificationIndex": 0,
   "sessions": [],

@@ -307,6 +307,7 @@ app.post("/api/auth/register", (req, res) => {
         owner: false,
         verified: false,
         joinedCommunities: [],
+        badgeIds: [],
         passwordHash: hashPassword(password),
     };
 
@@ -527,7 +528,7 @@ app.post("/api/notifications/clear", requireAuth, (req, res) => {
     return res.json(buildClientState(req.db));
 });
 
-app.post("/api/notifications/live", requireAuth, (req, res) => {
+app.post("/api/notifications/live", requireAuth, requireOwner, (req, res) => {
     const messages = [
         {
             title: "New follower request",

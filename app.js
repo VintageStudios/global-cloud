@@ -729,19 +729,46 @@ async function seedLiveNotification() {
     }
 
     try {
-        const previousCount = appState.notifications.length;
-        const state = await api("/api/notifications/live", {
-            method: "POST",
-            body: JSON.stringify({}),
-        });
+        const active = getActiveAccount();
 
-        syncState(state);
-        renderNotifications();
-
-        if (appState.notifications.length > previousCount) {
-            const newest = appState.notifications[0];
-            showToast(newest.title, newest.body);
+        if (!active) {
+            return;
         }
+
+        if (active.owner) {
+            const previousCount = appState.notifications.length;
+            const state = await api("/api/notifications/live", {
+                method: "POST",
+                body: JSON.stringify({}),
+            });
+
+            syncState(state);
+            const admin = await api("/api/admin/overview");
+            syncAdminState(admin);
+            renderAll();
+
+            if (appState.notifications.length > previousCount) {
+                const newest = appState.notifications[0];
+                showToast(newest.title, newest.body);
+            }
+            return;
+        }
+
+        await refreshState();
+    } catch (error) {
+        if (String(error.message).includes("Authentication required")) {
+            clearAuthenticatedSession();
+        }
+    }
+}
+
+async function pollLiveState() {
+    if (!authToken) {
+        return;
+    }
+
+    try {
+        await refreshState();
     } catch (error) {
         if (String(error.message).includes("Authentication required")) {
             clearAuthenticatedSession();
@@ -793,4 +820,5 @@ bootstrap().catch((error) => {
     showToast("Startup failed", "The app could not initialize.");
 });
 
+window.setInterval(pollLiveState, 8000);
 window.setInterval(seedLiveNotification, 18000);

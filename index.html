@@ -10,6 +10,50 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <section id="auth-screen" class="auth-screen">
+        <div class="auth-shell glass">
+            <div class="auth-brand">
+                <div class="brand-mark">GC</div>
+                <div>
+                    <p class="eyebrow">Members Only</p>
+                    <h1>Global Cloud</h1>
+                </div>
+            </div>
+
+            <div class="auth-copy">
+                <h2>Log in or create an account to enter the network.</h2>
+                <p>Visitors now start signed out. Each member uses their own email and password, so nobody lands inside your owner account by default.</p>
+            </div>
+
+            <div class="auth-grid">
+                <form id="login-form" class="glass auth-card stack-form">
+                    <div>
+                        <p class="eyebrow">Sign In</p>
+                        <h3>Welcome back</h3>
+                    </div>
+                    <input id="login-email" type="email" maxlength="64" placeholder="Email address">
+                    <input id="login-password" type="password" maxlength="64" placeholder="Password">
+                    <button class="primary-btn" type="submit">Log In</button>
+                </form>
+
+                <form id="register-form" class="glass auth-card stack-form">
+                    <div>
+                        <p class="eyebrow">Create Account</p>
+                        <h3>Join Global Cloud</h3>
+                    </div>
+                    <input id="register-name" type="text" maxlength="28" placeholder="Display name">
+                    <input id="register-email" type="email" maxlength="64" placeholder="Email address">
+                    <input id="register-password" type="password" maxlength="64" placeholder="Password">
+                    <input id="register-bio" type="text" maxlength="90" placeholder="Short bio">
+                    <button class="primary-btn" type="submit">Create Account</button>
+                </form>
+            </div>
+
+            <p class="auth-note">Owner account login is no longer automatic. Only signed-in users can view or post inside the app.</p>
+        </div>
+    </section>
+
+    <div id="app-shell" class="app-shell" hidden>
     <div class="page-shell">
         <aside class="sidebar left-panel">
             <div class="brand-card glass">
@@ -69,16 +113,19 @@
                             <span class="live-dot"></span>
                             <span>Live network activity</span>
                         </div>
-                        <button id="notification-bell" class="notification-bell" type="button" aria-label="Notification center">
-                            Notifications
-                            <span id="notification-count" class="notification-count">0</span>
-                        </button>
+                        <div class="hero-tools">
+                            <button id="notification-bell" class="notification-bell" type="button" aria-label="Notification center">
+                                Notifications
+                                <span id="notification-count" class="notification-count">0</span>
+                            </button>
+                            <button id="logout-button" class="ghost-btn" type="button">Log Out</button>
+                        </div>
                     </div>
                     <p class="eyebrow">Built for global conversations</p>
                     <h2>Share what matters. Discover what the world is building.</h2>
                     <p class="hero-text">Global Cloud is now a functional social app demo with account switching, user posts, uploads, community creation, and live notifications all running in the browser.</p>
                     <div class="hero-actions">
-                        <button id="focus-account" class="primary-btn" type="button">Create Account</button>
+                        <button id="focus-account" class="primary-btn" type="button">Create Community</button>
                         <button id="focus-feed" class="secondary-btn" type="button">Explore Live Feed</button>
                     </div>
                 </div>
@@ -100,18 +147,11 @@
                 <section class="glass utility-card" id="accounts">
                     <div class="section-head">
                         <div>
-                            <p class="eyebrow">Accounts</p>
-                            <h3>Create and switch accounts</h3>
+                            <p class="eyebrow">Account</p>
+                            <h3>Current member session</h3>
                         </div>
                         <span id="active-account-pill" class="status-pill">Active: Odell</span>
                     </div>
-
-                    <form id="account-form" class="stack-form">
-                        <input id="account-name" type="text" maxlength="28" placeholder="Display name">
-                        <input id="account-email" type="email" maxlength="64" placeholder="Email address">
-                        <input id="account-bio" type="text" maxlength="90" placeholder="Short bio">
-                        <button class="primary-btn" type="submit">Create Account</button>
-                    </form>
 
                     <div id="account-list" class="account-list"></div>
                 </section>
@@ -227,6 +267,7 @@
                 </aside>
             </section>
         </main>
+    </div>
     </div>
 
     <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>

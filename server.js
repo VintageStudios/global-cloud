@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
@@ -6,10 +7,45 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, "data");
 const DB_PATH = path.join(DATA_DIR, "global-cloud-db.json");
+const OWNER_TEMP_PASSWORD = "GlobalCloudOwner2026!";
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
+    const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+    return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, storedHash) {
+    const [salt, originalHash] = String(storedHash).split(":");
+    if (!salt || !originalHash) {
+        return false;
+    }
+
+    const hashBuffer = Buffer.from(originalHash, "hex");
+    const suppliedBuffer = crypto.scryptSync(password, salt, 64);
+    return hashBuffer.length === suppliedBuffer.length && crypto.timingSafeEqual(hashBuffer, suppliedBuffer);
+}
+
+function sanitizeAccount(account) {
+    const { passwordHash, ...safeAccount } = account;
+    return safeAccount;
+}
+
+function baseAccount(data) {
+    return {
+        id: data.id,
+        name: data.name,
+        email: data.email,
+        bio: data.bio,
+        owner: data.owner,
+        verified: data.verified,
+        joinedCommunities: data.joinedCommunities,
+        passwordHash: data.passwordHash,
+    };
+}
 
 const defaultDb = {
     accounts: [
-        {
+        baseAccount({
             id: "owner-odell",
             name: "Odell",
             email: "odell8933@gmail.com",
@@ -17,8 +53,9 @@ const defaultDb = {
             owner: true,
             verified: true,
             joinedCommunities: ["cloud-makers", "signal-lab"],
-        },
-        {
+            passwordHash: hashPassword(OWNER_TEMP_PASSWORD),
+        }),
+        baseAccount({
             id: "mateo-rivera",
             name: "Mateo Rivera",
             email: "mateo@example.com",
@@ -26,8 +63,9 @@ const defaultDb = {
             owner: false,
             verified: false,
             joinedCommunities: ["world-lens"],
-        },
-        {
+            passwordHash: hashPassword("MateoDemo2026!"),
+        }),
+        baseAccount({
             id: "priya-sol",
             name: "Priya Sol",
             email: "priya@example.com",
@@ -35,8 +73,9 @@ const defaultDb = {
             owner: false,
             verified: false,
             joinedCommunities: ["signal-lab"],
-        },
-        {
+            passwordHash: hashPassword("PriyaDemo2026!"),
+        }),
+        baseAccount({
             id: "leila-hassan",
             name: "Leila Hassan",
             email: "leila@example.com",
@@ -44,7 +83,8 @@ const defaultDb = {
             owner: false,
             verified: false,
             joinedCommunities: ["cloud-makers"],
-        },
+            passwordHash: hashPassword("LeilaDemo2026!"),
+        }),
     ],
     communities: [
         {
@@ -137,6 +177,7 @@ const defaultDb = {
             time: "19 min ago",
         },
     ],
+    sessions: [],
     liveNotificationIndex: 0,
 };
 
@@ -147,6 +188,36 @@ function ensureDb() {
 
     if (!fs.existsSync(DB_PATH)) {
         fs.writeFileSync(DB_PATH, JSON.stringify(defaultDb, null, 2));
+        return;
+    }
+
+    const db = JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
+    let changed = false;
+
+    db.sessions = Array.isArray(db.sessions) ? db.sessions : [];
+
+    db.accounts = (db.accounts || []).map((account) => {
+        if (account.passwordHash) {
+            return account;
+        }
+
+        changed = true;
+
+        if (account.owner) {
+            return {
+                ...account,
+                passwordHash: hashPassword(OWNER_TEMP_PASSWORD),
+            };
+        }
+
+        return {
+            ...account,
+            passwordHash: hashPassword(`TempPass-${account.id}`),
+        };
+    });
+
+    if (changed) {
+        fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
     }
 }
 
@@ -178,19 +249,65 @@ function addNotification(db, title, body, time = "Just now") {
     });
 }
 
+function buildClientState(db) {
+    return {
+        accounts: db.accounts.map(sanitizeAccount),
+        communities: db.communities,
+        posts: db.posts,
+        notifications: db.notifications,
+        messages: db.messages,
+        liveNotificationIndex: db.liveNotificationIndex,
+    };
+}
+
+function createSession(db, accountId) {
+    const token = crypto.randomUUID();
+    db.sessions = db.sessions.filter((session) => session.accountId !== accountId);
+    db.sessions.push({
+        token,
+        accountId,
+        createdAt: new Date().toISOString(),
+    });
+    return token;
+}
+
+function getToken(req) {
+    const authHeader = req.headers.authorization || "";
+    if (!authHeader.startsWith("Bearer ")) {
+        return null;
+    }
+    return authHeader.slice(7);
+}
+
+function requireAuth(req, res, next) {
+    const db = readDb();
+    const token = getToken(req);
+    const session = db.sessions.find((entry) => entry.token === token);
+
+    if (!session) {
+        return res.status(401).json({ error: "Authentication required." });
+    }
+
+    const account = db.accounts.find((entry) => entry.id === session.accountId);
+    if (!account) {
+        return res.status(401).json({ error: "Account not found." });
+    }
+
+    req.db = db;
+    req.account = account;
+    req.session = session;
+    return next();
+}
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.static(__dirname));
 
-app.get("/api/state", (req, res) => {
-    res.json(readDb());
-});
-
-app.post("/api/accounts", (req, res) => {
+app.post("/api/auth/register", (req, res) => {
     const db = readDb();
-    const { name, email, bio } = req.body;
+    const { name, email, password, bio } = req.body;
 
-    if (!name || !email) {
-        return res.status(400).json({ error: "Name and email are required." });
+    if (!name || !email || !password) {
+        return res.status(400).json({ error: "Name, email, and password are required." });
     }
 
     const id = slugify(name);
@@ -202,7 +319,7 @@ app.post("/api/accounts", (req, res) => {
         return res.status(409).json({ error: "That account already exists." });
     }
 
-    db.accounts.push({
+    const account = {
         id,
         name,
         email,
@@ -210,24 +327,67 @@ app.post("/api/accounts", (req, res) => {
         owner: false,
         verified: false,
         joinedCommunities: [],
-    });
+        passwordHash: hashPassword(password),
+    };
 
+    db.accounts.push(account);
+    const token = createSession(db, account.id);
     addNotification(db, "New account created", `${name} can now post and join communities.`);
     writeDb(db);
-    return res.status(201).json(db);
+
+    return res.status(201).json({
+        token,
+        account: sanitizeAccount(account),
+        state: buildClientState(db),
+    });
 });
 
-app.post("/api/communities", (req, res) => {
+app.post("/api/auth/login", (req, res) => {
     const db = readDb();
-    const { name, topic, description, creatorId } = req.body;
+    const { email, password } = req.body;
 
-    if (!name || !topic || !description || !creatorId) {
-        return res.status(400).json({ error: "Missing community fields." });
+    if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required." });
     }
 
-    const creator = db.accounts.find((account) => account.id === creatorId);
-    if (!creator) {
-        return res.status(404).json({ error: "Creator account not found." });
+    const account = db.accounts.find((entry) => entry.email.toLowerCase() === String(email).toLowerCase());
+    if (!account || !verifyPassword(password, account.passwordHash)) {
+        return res.status(401).json({ error: "Invalid email or password." });
+    }
+
+    const token = createSession(db, account.id);
+    writeDb(db);
+
+    return res.json({
+        token,
+        account: sanitizeAccount(account),
+        state: buildClientState(db),
+    });
+});
+
+app.get("/api/auth/me", requireAuth, (req, res) => {
+    return res.json({
+        account: sanitizeAccount(req.account),
+        state: buildClientState(req.db),
+    });
+});
+
+app.post("/api/auth/logout", requireAuth, (req, res) => {
+    req.db.sessions = req.db.sessions.filter((entry) => entry.token !== req.session.token);
+    writeDb(req.db);
+    return res.json({ success: true });
+});
+
+app.get("/api/state", requireAuth, (req, res) => {
+    res.json(buildClientState(req.db));
+});
+
+app.post("/api/communities", requireAuth, (req, res) => {
+    const db = req.db;
+    const { name, topic, description } = req.body;
+
+    if (!name || !topic || !description) {
+        return res.status(400).json({ error: "Missing community fields." });
     }
 
     const id = slugify(name);
@@ -240,58 +400,55 @@ app.post("/api/communities", (req, res) => {
         name,
         topic,
         description,
-        creatorId,
-        members: [creatorId],
+        creatorId: req.account.id,
+        members: [req.account.id],
     });
 
-    if (!creator.joinedCommunities.includes(id)) {
-        creator.joinedCommunities.unshift(id);
+    if (!req.account.joinedCommunities.includes(id)) {
+        req.account.joinedCommunities.unshift(id);
     }
 
-    addNotification(db, "Community created", `${creator.name} created ${name}.`);
+    addNotification(db, "Community created", `${req.account.name} created ${name}.`);
     writeDb(db);
-    return res.status(201).json(db);
+    return res.status(201).json(buildClientState(db));
 });
 
-app.post("/api/communities/:id/toggle-membership", (req, res) => {
-    const db = readDb();
+app.post("/api/communities/:id/toggle-membership", requireAuth, (req, res) => {
+    const db = req.db;
     const community = db.communities.find((entry) => entry.id === req.params.id);
-    const { accountId } = req.body;
-    const account = db.accounts.find((entry) => entry.id === accountId);
 
-    if (!community || !account) {
-        return res.status(404).json({ error: "Community or account not found." });
+    if (!community) {
+        return res.status(404).json({ error: "Community not found." });
     }
 
-    const joinedIndex = account.joinedCommunities.indexOf(community.id);
+    const joinedIndex = req.account.joinedCommunities.indexOf(community.id);
     if (joinedIndex >= 0) {
-        account.joinedCommunities.splice(joinedIndex, 1);
-        community.members = community.members.filter((memberId) => memberId !== accountId);
-        addNotification(db, "Community left", `${account.name} left ${community.name}.`);
+        req.account.joinedCommunities.splice(joinedIndex, 1);
+        community.members = community.members.filter((memberId) => memberId !== req.account.id);
+        addNotification(db, "Community left", `${req.account.name} left ${community.name}.`);
     } else {
-        account.joinedCommunities.unshift(community.id);
-        if (!community.members.includes(accountId)) {
-            community.members.push(accountId);
+        req.account.joinedCommunities.unshift(community.id);
+        if (!community.members.includes(req.account.id)) {
+            community.members.push(req.account.id);
         }
-        addNotification(db, "Community joined", `${account.name} joined ${community.name}.`);
+        addNotification(db, "Community joined", `${req.account.name} joined ${community.name}.`);
     }
 
     writeDb(db);
-    return res.json(db);
+    return res.json(buildClientState(db));
 });
 
-app.post("/api/posts", (req, res) => {
-    const db = readDb();
-    const { authorId, tag, communityId, content, upload } = req.body;
-    const author = db.accounts.find((account) => account.id === authorId);
+app.post("/api/posts", requireAuth, (req, res) => {
+    const db = req.db;
+    const { tag, communityId, content, upload } = req.body;
 
-    if (!author || !content) {
-        return res.status(400).json({ error: "Author and content are required." });
+    if (!content) {
+        return res.status(400).json({ error: "Content is required." });
     }
 
     db.posts.unshift({
         id: `post-${Date.now()}`,
-        authorId,
+        authorId: req.account.id,
         tag: tag || "General",
         communityId: communityId || "",
         content,
@@ -305,23 +462,21 @@ app.post("/api/posts", (req, res) => {
         ? db.communities.find((community) => community.id === communityId)?.name || "a community"
         : "the global feed";
 
-    addNotification(db, "Post published", `${author.name} shared a post to ${destination}.`);
+    addNotification(db, "Post published", `${req.account.name} shared a post to ${destination}.`);
     writeDb(db);
-    return res.status(201).json(db);
+    return res.status(201).json(buildClientState(db));
 });
 
-app.post("/api/notifications/clear", (req, res) => {
-    const db = readDb();
-    db.notifications = db.notifications.map((notification) => ({
+app.post("/api/notifications/clear", requireAuth, (req, res) => {
+    req.db.notifications = req.db.notifications.map((notification) => ({
         ...notification,
         unread: false,
     }));
-    writeDb(db);
-    return res.json(db);
+    writeDb(req.db);
+    return res.json(buildClientState(req.db));
 });
 
-app.post("/api/notifications/live", (req, res) => {
-    const db = readDb();
+app.post("/api/notifications/live", requireAuth, (req, res) => {
     const messages = [
         {
             title: "New follower request",
@@ -337,11 +492,11 @@ app.post("/api/notifications/live", (req, res) => {
         },
     ];
 
-    const next = messages[db.liveNotificationIndex] || messages[0];
-    db.liveNotificationIndex = (db.liveNotificationIndex + 1) % messages.length;
-    addNotification(db, next.title, next.body);
-    writeDb(db);
-    return res.json(db);
+    const next = messages[req.db.liveNotificationIndex] || messages[0];
+    req.db.liveNotificationIndex = (req.db.liveNotificationIndex + 1) % messages.length;
+    addNotification(req.db, next.title, next.body);
+    writeDb(req.db);
+    return res.json(buildClientState(req.db));
 });
 
 app.listen(PORT, () => {

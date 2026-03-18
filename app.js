@@ -1,4 +1,4 @@
-const ACTIVE_ACCOUNT_KEY = "global-cloud-active-account";
+const AUTH_TOKEN_KEY = "global-cloud-auth-token";
 
 const appState = {
     accounts: [],
@@ -11,6 +11,17 @@ const appState = {
 };
 
 const els = {
+    authScreen: document.querySelector("#auth-screen"),
+    appShell: document.querySelector("#app-shell"),
+    loginForm: document.querySelector("#login-form"),
+    loginEmail: document.querySelector("#login-email"),
+    loginPassword: document.querySelector("#login-password"),
+    registerForm: document.querySelector("#register-form"),
+    registerName: document.querySelector("#register-name"),
+    registerEmail: document.querySelector("#register-email"),
+    registerPassword: document.querySelector("#register-password"),
+    registerBio: document.querySelector("#register-bio"),
+    logoutButton: document.querySelector("#logout-button"),
     ownerName: document.querySelector("#owner-name"),
     ownerEmail: document.querySelector("#owner-email"),
     ownerAvatar: document.querySelector("#owner-avatar"),
@@ -34,10 +45,6 @@ const els = {
     notificationCount: document.querySelector("#notification-count"),
     notificationPanelCount: document.querySelector("#notification-panel-count"),
     messageList: document.querySelector("#message-list"),
-    accountForm: document.querySelector("#account-form"),
-    accountName: document.querySelector("#account-name"),
-    accountEmail: document.querySelector("#account-email"),
-    accountBio: document.querySelector("#account-bio"),
     communityForm: document.querySelector("#community-form"),
     communityName: document.querySelector("#community-name"),
     communityTopic: document.querySelector("#community-topic"),
@@ -53,6 +60,8 @@ const els = {
     focusAccount: document.querySelector("#focus-account"),
     focusFeed: document.querySelector("#focus-feed"),
 };
+
+let authToken = window.localStorage.getItem(AUTH_TOKEN_KEY) || "";
 
 function escapeHtml(value) {
     return String(value)
@@ -87,22 +96,13 @@ function showToast(title, body) {
     }, 4200);
 }
 
-function getAccountById(accountId) {
-    return appState.accounts.find((account) => account.id === accountId);
-}
-
-function getCommunityById(communityId) {
-    return appState.communities.find((community) => community.id === communityId);
+function setAuthMode(isLoggedIn) {
+    els.authScreen.hidden = isLoggedIn;
+    els.appShell.hidden = !isLoggedIn;
 }
 
 function getActiveAccount() {
-    return getAccountById(appState.activeAccountId) || appState.accounts[0];
-}
-
-function persistActiveAccount() {
-    if (appState.activeAccountId) {
-        window.localStorage.setItem(ACTIVE_ACCOUNT_KEY, appState.activeAccountId);
-    }
+    return appState.accounts.find((account) => account.id === appState.activeAccountId) || null;
 }
 
 function syncState(serverState) {
@@ -112,37 +112,6 @@ function syncState(serverState) {
     appState.notifications = serverState.notifications || [];
     appState.messages = serverState.messages || [];
     appState.liveNotificationIndex = serverState.liveNotificationIndex || 0;
-
-    const storedActive = window.localStorage.getItem(ACTIVE_ACCOUNT_KEY);
-    const preferredActive = storedActive && appState.accounts.some((account) => account.id === storedActive)
-        ? storedActive
-        : appState.accounts[0]?.id || null;
-
-    appState.activeAccountId = preferredActive;
-    persistActiveAccount();
-}
-
-async function api(path, options = {}) {
-    const response = await fetch(path, {
-        headers: {
-            "Content-Type": "application/json",
-            ...(options.headers || {}),
-        },
-        ...options,
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-        throw new Error(data.error || "Request failed.");
-    }
-
-    return data;
-}
-
-async function loadState() {
-    const state = await api("/api/state");
-    syncState(state);
-    renderAll();
 }
 
 function updateCounts() {
@@ -160,6 +129,24 @@ function accountBadgeMarkup(account) {
     return markup;
 }
 
+async function api(path, options = {}) {
+    const response = await fetch(path, {
+        headers: {
+            "Content-Type": "application/json",
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+            ...(options.headers || {}),
+        },
+        ...options,
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data.error || "Request failed.");
+    }
+
+    return data;
+}
+
 function renderSidebarIdentity() {
     const active = getActiveAccount();
     if (!active) {
@@ -169,7 +156,7 @@ function renderSidebarIdentity() {
     els.ownerName.textContent = active.name;
     els.ownerEmail.textContent = active.email;
     els.ownerAvatar.textContent = initialsFor(active.name);
-    els.profileLabel.textContent = active.owner ? "Owner Account" : "Active Account";
+    els.profileLabel.textContent = active.owner ? "Owner Account" : "Member Account";
     els.currentAccountLabel.textContent = active.name;
     els.joinedCommunityCount.textContent = active.joinedCommunities.length;
     els.activeAccountPill.textContent = `Active: ${active.name}`;
@@ -188,8 +175,6 @@ function renderStats() {
 
 function renderCommunitySelect() {
     const active = getActiveAccount();
-    const selectedValue = els.postCommunity.value;
-
     els.postCommunity.innerHTML = '<option value="">Post to everyone</option>';
 
     if (!active) {
@@ -204,40 +189,34 @@ function renderCommunitySelect() {
             option.textContent = community.name;
             els.postCommunity.appendChild(option);
         });
-
-    if ([...els.postCommunity.options].some((option) => option.value === selectedValue)) {
-        els.postCommunity.value = selectedValue;
-    }
 }
 
 function renderAccounts() {
+    const active = getActiveAccount();
     els.accountList.innerHTML = "";
 
-    appState.accounts.forEach((account) => {
-        const item = document.createElement("article");
-        item.className = "account-item";
-        const isActive = account.id === appState.activeAccountId;
+    if (!active) {
+        return;
+    }
 
-        item.innerHTML = `
-            <div class="account-item-head">
-                <div class="account-avatar">${escapeHtml(initialsFor(account.name))}</div>
-                <div>
-                    <div class="name-row">
-                        <h4>${escapeHtml(account.name)}</h4>
-                        ${accountBadgeMarkup(account)}
-                    </div>
-                    <p>${escapeHtml(account.email)}</p>
-                    <p>${escapeHtml(account.bio)}</p>
-                    <span class="pill">${account.joinedCommunities.length} joined</span>
+    const item = document.createElement("article");
+    item.className = "account-item";
+    item.innerHTML = `
+        <div class="account-item-head">
+            <div class="account-avatar">${escapeHtml(initialsFor(active.name))}</div>
+            <div>
+                <div class="name-row">
+                    <h4>${escapeHtml(active.name)}</h4>
+                    ${accountBadgeMarkup(active)}
                 </div>
+                <p>${escapeHtml(active.email)}</p>
+                <p>${escapeHtml(active.bio)}</p>
+                <span class="pill">${active.joinedCommunities.length} joined</span>
             </div>
-            <button class="toggle-btn ${isActive ? "active" : ""}" data-account-id="${account.id}" type="button">
-                ${isActive ? "Active account" : "Switch to account"}
-            </button>
-        `;
-
-        els.accountList.appendChild(item);
-    });
+        </div>
+        <button class="toggle-btn active" type="button">Signed In</button>
+    `;
+    els.accountList.appendChild(item);
 }
 
 function renderCommunities() {
@@ -245,7 +224,7 @@ function renderCommunities() {
     els.communityList.innerHTML = "";
 
     appState.communities.forEach((community) => {
-        const creator = getAccountById(community.creatorId);
+        const creator = appState.accounts.find((account) => account.id === community.creatorId);
         const joined = active ? active.joinedCommunities.includes(community.id) : false;
         const item = document.createElement("article");
         item.className = "community-item";
@@ -277,8 +256,8 @@ function renderFeed() {
     els.feedList.innerHTML = "";
 
     appState.posts.forEach((post) => {
-        const account = getAccountById(post.authorId);
-        const community = post.communityId ? getCommunityById(post.communityId) : null;
+        const account = appState.accounts.find((entry) => entry.id === post.authorId);
+        const community = post.communityId ? appState.communities.find((entry) => entry.id === post.communityId) : null;
         const article = document.createElement("article");
         article.className = "post-card";
 
@@ -329,11 +308,6 @@ function renderNotifications() {
     els.notificationCount.textContent = unreadCount;
     els.notificationPanelCount.textContent = unreadCount === 0 ? "All caught up" : `${unreadCount} unread`;
 
-    if (appState.notifications.length === 0) {
-        els.notificationList.innerHTML = '<div class="empty-state">No notifications yet.</div>';
-        return;
-    }
-
     appState.notifications.forEach((notification) => {
         const item = document.createElement("article");
         item.className = `notification-item${notification.unread ? " unread" : ""}`;
@@ -373,6 +347,27 @@ function renderAll() {
     updateCounts();
 }
 
+function setAuthenticatedSession(token, account, state) {
+    authToken = token;
+    window.localStorage.setItem(AUTH_TOKEN_KEY, token);
+    syncState(state);
+    appState.activeAccountId = account.id;
+    setAuthMode(true);
+    renderAll();
+}
+
+function clearAuthenticatedSession() {
+    authToken = "";
+    appState.accounts = [];
+    appState.communities = [];
+    appState.posts = [];
+    appState.notifications = [];
+    appState.messages = [];
+    appState.activeAccountId = null;
+    window.localStorage.removeItem(AUTH_TOKEN_KEY);
+    setAuthMode(false);
+}
+
 async function readFileAsDataUrl(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -394,61 +389,87 @@ async function buildUploadPayload(file) {
     };
 }
 
-async function handleCreateAccount(event) {
+async function refreshState() {
+    const state = await api("/api/state");
+    syncState(state);
+    renderAll();
+}
+
+async function handleLogin(event) {
     event.preventDefault();
 
-    const name = els.accountName.value.trim();
-    const email = els.accountEmail.value.trim();
-    const bio = els.accountBio.value.trim();
-
-    if (!name || !email) {
-        showToast("Missing information", "Please add a display name and email to create an account.");
-        return;
-    }
-
     try {
-        const state = await api("/api/accounts", {
+        const result = await api("/api/auth/login", {
             method: "POST",
-            body: JSON.stringify({ name, email, bio }),
+            body: JSON.stringify({
+                email: els.loginEmail.value.trim(),
+                password: els.loginPassword.value,
+            }),
         });
 
-        syncState(state);
-        renderAll();
-        els.accountForm.reset();
-        showToast("Account created", `${name} is now part of Global Cloud.`);
+        setAuthenticatedSession(result.token, result.account, result.state);
+        els.loginForm.reset();
+        showToast("Logged in", `Welcome back, ${result.account.name}.`);
     } catch (error) {
-        showToast("Account failed", error.message);
+        showToast("Login failed", error.message);
     }
+}
+
+async function handleRegister(event) {
+    event.preventDefault();
+
+    try {
+        const result = await api("/api/auth/register", {
+            method: "POST",
+            body: JSON.stringify({
+                name: els.registerName.value.trim(),
+                email: els.registerEmail.value.trim(),
+                password: els.registerPassword.value,
+                bio: els.registerBio.value.trim(),
+            }),
+        });
+
+        setAuthenticatedSession(result.token, result.account, result.state);
+        els.registerForm.reset();
+        showToast("Account created", `${result.account.name} is now signed in.`);
+    } catch (error) {
+        showToast("Registration failed", error.message);
+    }
+}
+
+async function handleLogout() {
+    try {
+        if (authToken) {
+            await api("/api/auth/logout", {
+                method: "POST",
+                body: JSON.stringify({}),
+            });
+        }
+    } catch (error) {
+        console.warn("Logout failed", error);
+    }
+
+    clearAuthenticatedSession();
+    showToast("Logged out", "You have been signed out.");
 }
 
 async function handleCreateCommunity(event) {
     event.preventDefault();
 
-    const active = getActiveAccount();
-    const name = els.communityName.value.trim();
-    const topic = els.communityTopic.value.trim();
-    const description = els.communityDescription.value.trim();
-
-    if (!active) {
-        showToast("No account", "Create or select an account first.");
-        return;
-    }
-
     try {
         const state = await api("/api/communities", {
             method: "POST",
             body: JSON.stringify({
-                name,
-                topic,
-                description,
-                creatorId: active.id,
+                name: els.communityName.value.trim(),
+                topic: els.communityTopic.value.trim(),
+                description: els.communityDescription.value.trim(),
             }),
         });
 
         syncState(state);
         renderAll();
         els.communityForm.reset();
-        showToast("Community created", `${name} is now live.`);
+        showToast("Community created", "Your new community is live.");
     } catch (error) {
         showToast("Community failed", error.message);
     }
@@ -457,30 +478,19 @@ async function handleCreateCommunity(event) {
 async function handlePostSubmit(event) {
     event.preventDefault();
 
-    const active = getActiveAccount();
     const content = els.postContent.value.trim();
-    const tag = els.postTag.value.trim() || "General";
-    const communityId = els.postCommunity.value;
-    const file = els.postUpload.files[0];
-
-    if (!active) {
-        showToast("No account", "Create or select an account first.");
-        return;
-    }
-
     if (!content) {
         showToast("Post is empty", "Write something before publishing.");
         return;
     }
 
     try {
-        const upload = await buildUploadPayload(file);
+        const upload = await buildUploadPayload(els.postUpload.files[0]);
         const state = await api("/api/posts", {
             method: "POST",
             body: JSON.stringify({
-                authorId: active.id,
-                tag,
-                communityId,
+                tag: els.postTag.value.trim() || "General",
+                communityId: els.postCommunity.value,
                 content,
                 upload,
             }),
@@ -490,7 +500,7 @@ async function handlePostSubmit(event) {
         renderAll();
         els.postForm.reset();
         els.uploadPreview.textContent = "No upload selected";
-        showToast("Post published", `${active.name}'s update is now live.`);
+        showToast("Post published", "Your update is now live.");
     } catch (error) {
         showToast("Post failed", error.message);
     }
@@ -517,37 +527,17 @@ async function handleCommunityActions(event) {
         return;
     }
 
-    const active = getActiveAccount();
-    if (!active) {
-        showToast("No account", "Create or select an account first.");
-        return;
-    }
-
     try {
         const state = await api(`/api/communities/${button.dataset.communityId}/toggle-membership`, {
             method: "POST",
-            body: JSON.stringify({ accountId: active.id }),
+            body: JSON.stringify({}),
         });
 
         syncState(state);
         renderAll();
     } catch (error) {
-        showToast("Join failed", error.message);
+        showToast("Community update failed", error.message);
     }
-}
-
-function handleAccountActions(event) {
-    const button = event.target.closest("[data-account-id]");
-    if (!button) {
-        return;
-    }
-
-    appState.activeAccountId = button.dataset.accountId;
-    persistActiveAccount();
-    renderAll();
-
-    const account = getActiveAccount();
-    showToast("Account switched", `You are now posting as ${account.name}.`);
 }
 
 function handleUploadPreview() {
@@ -556,13 +546,17 @@ function handleUploadPreview() {
 }
 
 async function seedLiveNotification() {
+    if (!authToken) {
+        return;
+    }
+
     try {
+        const previousCount = appState.notifications.length;
         const state = await api("/api/notifications/live", {
             method: "POST",
             body: JSON.stringify({}),
         });
 
-        const previousCount = appState.notifications.length;
         syncState(state);
         renderNotifications();
 
@@ -571,28 +565,49 @@ async function seedLiveNotification() {
             showToast(newest.title, newest.body);
         }
     } catch (error) {
-        console.warn("Live notification failed", error);
+        if (String(error.message).includes("Authentication required")) {
+            clearAuthenticatedSession();
+        }
     }
 }
 
-els.accountForm.addEventListener("submit", handleCreateAccount);
+async function bootstrap() {
+    setAuthMode(false);
+
+    if (!authToken) {
+        return;
+    }
+
+    try {
+        const result = await api("/api/auth/me");
+        syncState(result.state);
+        appState.activeAccountId = result.account.id;
+        setAuthMode(true);
+        renderAll();
+    } catch (error) {
+        clearAuthenticatedSession();
+    }
+}
+
+els.loginForm.addEventListener("submit", handleLogin);
+els.registerForm.addEventListener("submit", handleRegister);
+els.logoutButton.addEventListener("click", handleLogout);
 els.communityForm.addEventListener("submit", handleCreateCommunity);
 els.postForm.addEventListener("submit", handlePostSubmit);
 els.postUpload.addEventListener("change", handleUploadPreview);
 els.postContent.addEventListener("input", updateCounts);
 els.notificationBell.addEventListener("click", handleClearNotifications);
-els.accountList.addEventListener("click", handleAccountActions);
 els.communityList.addEventListener("click", handleCommunityActions);
 els.focusAccount.addEventListener("click", () => {
-    document.querySelector("#accounts").scrollIntoView({ behavior: "smooth" });
+    document.querySelector("#communities").scrollIntoView({ behavior: "smooth" });
 });
 els.focusFeed.addEventListener("click", () => {
     document.querySelector("#feed").scrollIntoView({ behavior: "smooth" });
 });
 
-loadState().catch((error) => {
-    showToast("Server unavailable", "Start the Node server to load Global Cloud.");
+bootstrap().catch((error) => {
     console.error(error);
+    showToast("Startup failed", "The app could not initialize.");
 });
 
 window.setInterval(seedLiveNotification, 18000);

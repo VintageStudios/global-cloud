@@ -10,7 +10,8 @@
       "joinedCommunities": [
         "cloud-makers",
         "signal-lab"
-      ]
+      ],
+      "passwordHash": "5fc0a2260644c407cf2c30d37ed90339:eae6fee69c5d6c8f6cb5e6195c830b4382dda461413cc017d5e076aef5013aee4302d84bc9b3ac24947060161acc5123d759db823022ff9f997b461aecb358a1"
     },
     {
       "id": "mateo-rivera",
@@ -21,7 +22,8 @@
       "verified": false,
       "joinedCommunities": [
         "world-lens"
-      ]
+      ],
+      "passwordHash": "f832ff717aa3a9ac178226afadd63885:192717a536926e7b42b2588fc77ec6a26a3fc5a1f6c9c89b67177991fdec3f1440a7df8bc071a66922094a7f55c6187effb9dd22bd315558a44ba52c731aad3b"
     },
     {
       "id": "priya-sol",
@@ -32,7 +34,8 @@
       "verified": false,
       "joinedCommunities": [
         "signal-lab"
-      ]
+      ],
+      "passwordHash": "1173c83d869edfcf72a9860eab5a0fd9:bb29275e83375eb44eba35e0e8a9322aa62a36fa132a65c87c36722ad98431f03f8867f3eaf9d6c9f369c3d3d050524a9702ae61939fc9fd064a2ce506bfa634"
     },
     {
       "id": "leila-hassan",
@@ -43,7 +46,8 @@
       "verified": false,
       "joinedCommunities": [
         "cloud-makers"
-      ]
+      ],
+      "passwordHash": "53fc48a66f23fc86f68fbe59f297b749:283b2ff23520245ce0229da7d6fcb86ec034efa60505f37317f858e05ab79ead80954157a0bdb355c5a21fe5fc60900c2f548bb1eb077c57bf35a18c86b1b3ab"
     }
   ],
   "communities": [
@@ -145,5 +149,6 @@
       "time": "19 min ago"
     }
   ],
-  "liveNotificationIndex": 0
+  "liveNotificationIndex": 0,
+  "sessions": []
 }

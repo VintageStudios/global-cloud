@@ -1,0 +1,4 @@
+cd "C:\Users\Workbook Pro\Documents\HTML Project #1"
+git add .
+git commit -m "Refresh site design"
+git push

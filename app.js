@@ -29,6 +29,7 @@ const els = {
     registerEmail: document.querySelector("#register-email"),
     registerPassword: document.querySelector("#register-password"),
     registerBio: document.querySelector("#register-bio"),
+    registerTerms: document.querySelector("#register-terms"),
     logoutButton: document.querySelector("#logout-button"),
     ownerName: document.querySelector("#owner-name"),
     ownerEmail: document.querySelector("#owner-email"),
@@ -613,6 +614,11 @@ async function handleLogin(event) {
 async function handleRegister(event) {
     event.preventDefault();
 
+    if (!els.registerTerms.checked) {
+        showToast("Agreement required", "You must accept the Terms of Use before creating an account.");
+        return;
+    }
+
     try {
         const result = await api("/api/auth/register", {
             method: "POST",
@@ -621,6 +627,7 @@ async function handleRegister(event) {
                 email: els.registerEmail.value.trim(),
                 password: els.registerPassword.value,
                 bio: els.registerBio.value.trim(),
+                acceptedTerms: els.registerTerms.checked,
             }),
         });
 

@@ -8,6 +8,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, "data");
 const DB_PATH = path.join(DATA_DIR, "global-cloud-db.json");
 const OWNER_TEMP_PASSWORD = "GlobalCloudOwner2026!";
+const TERMS_VERSION = "2026-03-20";
 const DEMO_ACCOUNT_IDS = new Set(["mateo-rivera", "priya-sol", "leila-hassan"]);
 const DEMO_COMMUNITY_IDS = new Set(["world-lens", "signal-lab"]);
 const DEMO_POST_IDS = new Set(["post-mateo", "post-priya"]);
@@ -44,6 +45,8 @@ function baseAccount(data) {
         verified: data.verified,
         joinedCommunities: data.joinedCommunities,
         badgeIds: data.badgeIds || [],
+        acceptedTermsAt: data.acceptedTermsAt || null,
+        acceptedTermsVersion: data.acceptedTermsVersion || null,
         passwordHash: data.passwordHash,
     };
 }
@@ -59,6 +62,8 @@ const defaultDb = {
             verified: true,
             joinedCommunities: ["cloud-makers"],
             badgeIds: ["founder", "verified-owner"],
+            acceptedTermsAt: new Date().toISOString(),
+            acceptedTermsVersion: TERMS_VERSION,
             passwordHash: hashPassword(OWNER_TEMP_PASSWORD),
         }),
     ],
@@ -170,6 +175,8 @@ function ensureDb() {
         ...account,
         joinedCommunities: (account.joinedCommunities || []).filter((communityId) => !DEMO_COMMUNITY_IDS.has(communityId)),
         badgeIds: Array.isArray(account.badgeIds) ? account.badgeIds : [],
+        acceptedTermsAt: account.acceptedTermsAt || (account.owner ? new Date().toISOString() : null),
+        acceptedTermsVersion: account.acceptedTermsVersion || (account.owner ? TERMS_VERSION : null),
     }));
 
     defaultDb.badges.forEach((defaultBadge) => {
@@ -366,10 +373,14 @@ app.use(express.static(__dirname));
 
 app.post("/api/auth/register", (req, res) => {
     const db = readDb();
-    const { name, email, password, bio } = req.body;
+    const { name, email, password, bio, acceptedTerms } = req.body;
 
     if (!name || !email || !password) {
         return res.status(400).json({ error: "Name, email, and password are required." });
+    }
+
+    if (acceptedTerms !== true) {
+        return res.status(400).json({ error: "You must accept the Terms of Use before creating an account." });
     }
 
     const id = slugify(name);
@@ -390,6 +401,8 @@ app.post("/api/auth/register", (req, res) => {
         verified: false,
         joinedCommunities: [],
         badgeIds: [],
+        acceptedTermsAt: new Date().toISOString(),
+        acceptedTermsVersion: TERMS_VERSION,
         passwordHash: hashPassword(password),
     };
 

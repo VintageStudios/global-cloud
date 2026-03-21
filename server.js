@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const Database = require("better-sqlite3");
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
@@ -6,13 +7,15 @@ const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, "data");
-const DB_PATH = path.join(DATA_DIR, "global-cloud-db.json");
+const SQLITE_DB_PATH = path.join(DATA_DIR, "global-cloud.db");
+const LEGACY_JSON_PATH = path.join(DATA_DIR, "global-cloud-db.json");
 const OWNER_TEMP_PASSWORD = "GlobalCloudOwner2026!";
 const TERMS_VERSION = "2026-03-20";
 const DEMO_ACCOUNT_IDS = new Set(["mateo-rivera", "priya-sol", "leila-hassan"]);
 const DEMO_COMMUNITY_IDS = new Set(["world-lens", "signal-lab"]);
 const DEMO_POST_IDS = new Set(["post-mateo", "post-priya"]);
 const ADMIN_BADGE_ID = "moderator";
+let sqliteDb = null;
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
     const hash = crypto.scryptSync(password, salt, 64).toString("hex");
@@ -119,17 +122,10 @@ const defaultDb = {
     liveNotificationIndex: 0,
 };
 
-function ensureDb() {
+function normalizeDbState(db) {
     if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
     }
-
-    if (!fs.existsSync(DB_PATH)) {
-        fs.writeFileSync(DB_PATH, JSON.stringify(defaultDb, null, 2));
-        return;
-    }
-
-    const db = JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
     let changed = false;
 
     db.sessions = Array.isArray(db.sessions) ? db.sessions : [];
@@ -268,17 +264,63 @@ function ensureDb() {
     }
 
     if (changed) {
-        fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+        return { db, changed: true };
+    }
+
+    return { db, changed: false };
+}
+
+function getSqliteDb() {
+    if (sqliteDb) {
+        return sqliteDb;
+    }
+
+    if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+
+    sqliteDb = new Database(SQLITE_DB_PATH);
+    sqliteDb.pragma("journal_mode = DELETE");
+    sqliteDb.exec(`
+        CREATE TABLE IF NOT EXISTS app_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    `);
+    return sqliteDb;
+}
+
+function ensureDb() {
+    const dbFile = getSqliteDb();
+    const stateRow = dbFile.prepare("SELECT value FROM app_state WHERE key = ?").get("state");
+
+    if (!stateRow) {
+        const seedState = fs.existsSync(LEGACY_JSON_PATH)
+            ? JSON.parse(fs.readFileSync(LEGACY_JSON_PATH, "utf8"))
+            : JSON.parse(JSON.stringify(defaultDb));
+        const { db } = normalizeDbState(seedState);
+        dbFile.prepare("INSERT INTO app_state (key, value) VALUES (?, ?)").run("state", JSON.stringify(db));
+        return;
+    }
+
+    const parsedState = JSON.parse(stateRow.value);
+    const { db, changed } = normalizeDbState(parsedState);
+    if (changed) {
+        dbFile.prepare("UPDATE app_state SET value = ? WHERE key = ?").run(JSON.stringify(db), "state");
     }
 }
 
 function readDb() {
     ensureDb();
-    return JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
+    const dbFile = getSqliteDb();
+    const row = dbFile.prepare("SELECT value FROM app_state WHERE key = ?").get("state");
+    return row ? JSON.parse(row.value) : JSON.parse(JSON.stringify(defaultDb));
 }
 
 function writeDb(db) {
-    fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
+    const dbFile = getSqliteDb();
+    dbFile.prepare("INSERT INTO app_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+        .run("state", JSON.stringify(db));
 }
 
 function slugify(value) {

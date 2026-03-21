@@ -51,7 +51,12 @@
                     <input id="register-name" type="text" maxlength="28" placeholder="Display name">
                     <input id="register-email" type="email" maxlength="64" placeholder="Email address">
                     <input id="register-password" type="password" maxlength="64" placeholder="Password">
+                    <input id="register-birthdate" type="date" max="2026-03-20">
                     <input id="register-bio" type="text" maxlength="90" placeholder="Short bio">
+                    <label class="terms-check">
+                        <input id="register-age-check" type="checkbox">
+                        <span>I confirm that I am at least 13 years old.</span>
+                    </label>
                     <label class="terms-check">
                         <input id="register-terms" type="checkbox">
                         <span>I agree to the <a href="terms.html" target="_blank" rel="noopener noreferrer">Terms of Use &amp; Copyright Policy</a>.</span>
@@ -356,8 +361,16 @@
 
                     <section class="glass side-card" id="messages">
                         <p class="eyebrow">Messages</p>
-                        <h3>Inbox snapshot</h3>
+                        <h3>Private chat</h3>
+                        <div class="dm-controls">
+                            <label for="dm-recipient-select">Chat with</label>
+                            <select id="dm-recipient-select"></select>
+                        </div>
                         <div id="message-list" class="message-list"></div>
+                        <form id="message-form" class="stack-form">
+                            <textarea id="message-input" rows="3" maxlength="280" placeholder="Write a private message"></textarea>
+                            <button class="primary-btn" type="submit">Send Message</button>
+                        </form>
                     </section>
                 </aside>
             </section>

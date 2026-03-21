@@ -825,6 +825,17 @@ p {
     margin: 16px 0 12px;
 }
 
+.dm-controls {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.dm-controls label {
+    color: var(--muted-strong);
+    font-weight: 600;
+}
+
 .chat-toolbar label {
     color: var(--muted-strong);
     font-weight: 600;
@@ -1125,6 +1136,60 @@ textarea {
     background: rgba(21, 34, 53, 0.05);
 }
 
+.post-actions {
+    gap: 10px;
+}
+
+.comment-block {
+    margin-top: 16px;
+    display: grid;
+    gap: 12px;
+}
+
+.comment-list {
+    display: grid;
+    gap: 10px;
+}
+
+.comment-item {
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: rgba(247, 251, 255, 0.95);
+    border: 1px solid rgba(21, 34, 53, 0.08);
+}
+
+.comment-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.comment-head span {
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+.comment-item p {
+    color: var(--muted-strong);
+    line-height: 1.55;
+}
+
+.comment-form {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.comment-form input {
+    flex: 1 1 auto;
+}
+
+.compact-empty {
+    padding: 14px;
+}
+
 .meta-actions {
     justify-content: flex-end;
 }
@@ -1171,6 +1236,11 @@ textarea {
 .message-card span {
     color: var(--accent-strong);
     font-size: 0.84rem;
+}
+
+.own-message {
+    background: rgba(29, 125, 242, 0.08);
+    border-color: rgba(29, 125, 242, 0.16);
 }
 
 .admin-note {
@@ -1318,6 +1388,7 @@ textarea {
     .split-fields,
     .hero-tools,
     .chat-form,
+    .comment-form,
     .composer-header,
     .composer-bar,
     .hero-topbar,

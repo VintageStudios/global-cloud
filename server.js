@@ -31,7 +31,7 @@ function verifyPassword(password, storedHash) {
 }
 
 function sanitizeAccount(account) {
-    const { passwordHash, ...safeAccount } = account;
+    const { passwordHash, birthDate, ...safeAccount } = account;
     return safeAccount;
 }
 
@@ -47,6 +47,9 @@ function baseAccount(data) {
         badgeIds: data.badgeIds || [],
         acceptedTermsAt: data.acceptedTermsAt || null,
         acceptedTermsVersion: data.acceptedTermsVersion || null,
+        ageVerifiedAt: data.ageVerifiedAt || null,
+        ageVerified13Plus: Boolean(data.ageVerified13Plus),
+        birthDate: data.birthDate || null,
         passwordHash: data.passwordHash,
     };
 }
@@ -64,6 +67,9 @@ const defaultDb = {
             badgeIds: ["founder", "verified-owner"],
             acceptedTermsAt: new Date().toISOString(),
             acceptedTermsVersion: TERMS_VERSION,
+            ageVerifiedAt: new Date().toISOString(),
+            ageVerified13Plus: true,
+            birthDate: "1990-01-01",
             passwordHash: hashPassword(OWNER_TEMP_PASSWORD),
         }),
     ],
@@ -93,6 +99,8 @@ const defaultDb = {
             upload: null,
             likes: 2700,
             replies: 914,
+            likedBy: [],
+            comments: [],
         },
     ],
     notifications: [],
@@ -127,6 +135,8 @@ function ensureDb() {
     db.sessions = Array.isArray(db.sessions) ? db.sessions : [];
     db.badges = Array.isArray(db.badges) ? db.badges : JSON.parse(JSON.stringify(defaultDb.badges));
     db.notifications = Array.isArray(db.notifications) ? db.notifications : [];
+    db.messages = Array.isArray(db.messages) ? db.messages : [];
+    db.posts = Array.isArray(db.posts) ? db.posts : [];
     db.communityMessages = typeof db.communityMessages === "object" && db.communityMessages !== null
         ? db.communityMessages
         : {};
@@ -143,8 +153,18 @@ function ensureDb() {
     db.posts = (db.posts || []).filter((post) => !DEMO_POST_IDS.has(post.id) && !DEMO_ACCOUNT_IDS.has(post.authorId));
     changed = changed || db.posts.length !== previousPostCount;
 
-    const previousMessageCount = (db.messages || []).length;
-    db.messages = (db.messages || []).filter((message) => !["Leila Hassan", "Owen Park"].includes(message.sender));
+    const previousMessageCount = db.messages.length;
+    db.messages = db.messages.filter((message) => {
+        if (!message || typeof message !== "object") {
+            return false;
+        }
+
+        if (message.sender && ["Leila Hassan", "Owen Park"].includes(message.sender)) {
+            return false;
+        }
+
+        return Boolean(message.senderId && message.recipientId && String(message.body || "").trim());
+    });
     changed = changed || db.messages.length !== previousMessageCount;
 
     const previousNotificationCount = db.notifications.length;
@@ -177,7 +197,39 @@ function ensureDb() {
         badgeIds: Array.isArray(account.badgeIds) ? account.badgeIds : [],
         acceptedTermsAt: account.acceptedTermsAt || (account.owner ? new Date().toISOString() : null),
         acceptedTermsVersion: account.acceptedTermsVersion || (account.owner ? TERMS_VERSION : null),
+        ageVerifiedAt: account.ageVerifiedAt || (account.owner ? new Date().toISOString() : null),
+        ageVerified13Plus: account.ageVerified13Plus === true || account.owner === true,
+        birthDate: account.birthDate || (account.owner ? "1990-01-01" : null),
     }));
+
+    db.posts = db.posts.map((post) => {
+        const likedBy = Array.isArray(post.likedBy) ? [...new Set(post.likedBy.filter(Boolean))] : [];
+        const comments = Array.isArray(post.comments) ? post.comments.filter((comment) => (
+            comment
+            && typeof comment === "object"
+            && comment.authorId
+            && String(comment.content || "").trim()
+        )) : [];
+
+        const normalizedPost = {
+            ...post,
+            likedBy,
+            comments,
+            likes: likedBy.length || Number(post.likes || 0),
+            replies: comments.length || Number(post.replies || 0),
+        };
+
+        if (
+            normalizedPost.likes !== post.likes
+            || normalizedPost.replies !== post.replies
+            || likedBy !== post.likedBy
+            || comments !== post.comments
+        ) {
+            changed = true;
+        }
+
+        return normalizedPost;
+    });
 
     defaultDb.badges.forEach((defaultBadge) => {
         if (!db.badges.some((badge) => badge.id === defaultBadge.id)) {
@@ -259,7 +311,11 @@ function isAutoNotification(notification) {
     return autoTitles.has(String(notification?.title || ""));
 }
 
-function buildClientState(db) {
+function buildClientState(db, viewerId = "") {
+    const visibleMessages = viewerId
+        ? (db.messages || []).filter((message) => message.senderId === viewerId || message.recipientId === viewerId)
+        : [];
+
     return {
         accounts: db.accounts.map(sanitizeAccount),
         badges: db.badges,
@@ -267,9 +323,26 @@ function buildClientState(db) {
         communityMessages: db.communityMessages,
         posts: db.posts,
         notifications: db.notifications,
-        messages: db.messages,
+        messages: visibleMessages,
         liveNotificationIndex: db.liveNotificationIndex,
     };
+}
+
+function yearsOldOnDate(birthDateText, today = new Date()) {
+    const birthDate = new Date(birthDateText);
+    if (Number.isNaN(birthDate.getTime())) {
+        return -1;
+    }
+
+    let years = today.getUTCFullYear() - birthDate.getUTCFullYear();
+    const monthDiff = today.getUTCMonth() - birthDate.getUTCMonth();
+    const dayDiff = today.getUTCDate() - birthDate.getUTCDate();
+
+    if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+        years -= 1;
+    }
+
+    return years;
 }
 
 function createSession(db, accountId) {
@@ -373,7 +446,7 @@ app.use(express.static(__dirname));
 
 app.post("/api/auth/register", (req, res) => {
     const db = readDb();
-    const { name, email, password, bio, acceptedTerms } = req.body;
+    const { name, email, password, bio, acceptedTerms, birthDate, acceptedAge13Plus } = req.body;
 
     if (!name || !email || !password) {
         return res.status(400).json({ error: "Name, email, and password are required." });
@@ -381,6 +454,15 @@ app.post("/api/auth/register", (req, res) => {
 
     if (acceptedTerms !== true) {
         return res.status(400).json({ error: "You must accept the Terms of Use before creating an account." });
+    }
+
+    if (acceptedAge13Plus !== true) {
+        return res.status(400).json({ error: "You must confirm that you are at least 13 years old." });
+    }
+
+    const age = yearsOldOnDate(birthDate);
+    if (age < 13) {
+        return res.status(400).json({ error: "You must be at least 13 years old to create an account." });
     }
 
     const id = slugify(name);
@@ -403,6 +485,9 @@ app.post("/api/auth/register", (req, res) => {
         badgeIds: [],
         acceptedTermsAt: new Date().toISOString(),
         acceptedTermsVersion: TERMS_VERSION,
+        ageVerifiedAt: new Date().toISOString(),
+        ageVerified13Plus: true,
+        birthDate,
         passwordHash: hashPassword(password),
     };
 
@@ -414,7 +499,7 @@ app.post("/api/auth/register", (req, res) => {
     return res.status(201).json({
         token,
         account: sanitizeAccount(account),
-        state: buildClientState(db),
+        state: buildClientState(db, account.id),
     });
 });
 
@@ -437,14 +522,14 @@ app.post("/api/auth/login", (req, res) => {
     return res.json({
         token,
         account: sanitizeAccount(account),
-        state: buildClientState(db),
+        state: buildClientState(db, account.id),
     });
 });
 
 app.get("/api/auth/me", requireAuth, (req, res) => {
     return res.json({
         account: sanitizeAccount(req.account),
-        state: buildClientState(req.db),
+        state: buildClientState(req.db, req.account.id),
     });
 });
 
@@ -486,7 +571,7 @@ app.post("/api/admin/notifications", requireAuth, requireOwner, (req, res) => {
     addNotification(req.db, title, body);
     writeDb(req.db);
     return res.status(201).json({
-        state: buildClientState(req.db),
+        state: buildClientState(req.db, req.account.id),
         admin: buildAdminState(req.db),
     });
 });
@@ -542,7 +627,7 @@ app.post("/api/admin/accounts/:id/revoke-sessions", requireAuth, requireAdmin, (
 });
 
 app.get("/api/state", requireAuth, (req, res) => {
-    res.json(buildClientState(req.db));
+    res.json(buildClientState(req.db, req.account.id));
 });
 
 app.post("/api/communities", requireAuth, (req, res) => {
@@ -574,7 +659,7 @@ app.post("/api/communities", requireAuth, (req, res) => {
 
     addNotification(db, "Community created", `${req.account.name} created ${name}.`);
     writeDb(db);
-    return res.status(201).json(buildClientState(db));
+    return res.status(201).json(buildClientState(db, req.account.id));
 });
 
 app.post("/api/communities/:id/toggle-membership", requireAuth, (req, res) => {
@@ -599,7 +684,7 @@ app.post("/api/communities/:id/toggle-membership", requireAuth, (req, res) => {
     }
 
     writeDb(db);
-    return res.json(buildClientState(db));
+    return res.json(buildClientState(db, req.account.id));
 });
 
 app.get("/api/communities/:id/messages", requireAuth, (req, res) => {
@@ -649,7 +734,7 @@ app.post("/api/communities/:id/messages", requireAuth, (req, res) => {
     });
 
     writeDb(db);
-    return res.status(201).json(buildClientState(db));
+    return res.status(201).json(buildClientState(db, req.account.id));
 });
 
 app.post("/api/posts", requireAuth, (req, res) => {
@@ -678,7 +763,84 @@ app.post("/api/posts", requireAuth, (req, res) => {
 
     addNotification(db, "Post published", `${req.account.name} shared a post to ${destination}.`);
     writeDb(db);
-    return res.status(201).json(buildClientState(db));
+    return res.status(201).json(buildClientState(db, req.account.id));
+});
+
+app.post("/api/posts/:id/like", requireAuth, (req, res) => {
+    const db = req.db;
+    const post = db.posts.find((entry) => entry.id === req.params.id);
+
+    if (!post) {
+        return res.status(404).json({ error: "Post not found." });
+    }
+
+    post.likedBy = Array.isArray(post.likedBy) ? post.likedBy : [];
+
+    if (post.likedBy.includes(req.account.id)) {
+        post.likedBy = post.likedBy.filter((accountId) => accountId !== req.account.id);
+    } else {
+        post.likedBy.unshift(req.account.id);
+    }
+
+    post.likes = post.likedBy.length;
+    writeDb(db);
+    return res.json(buildClientState(db, req.account.id));
+});
+
+app.post("/api/posts/:id/comments", requireAuth, (req, res) => {
+    const db = req.db;
+    const post = db.posts.find((entry) => entry.id === req.params.id);
+    const content = String(req.body?.content || "").trim();
+
+    if (!post) {
+        return res.status(404).json({ error: "Post not found." });
+    }
+
+    if (!content) {
+        return res.status(400).json({ error: "Comment content is required." });
+    }
+
+    post.comments = Array.isArray(post.comments) ? post.comments : [];
+    post.comments.push({
+        id: `comment-${Date.now()}`,
+        authorId: req.account.id,
+        content,
+        createdAt: "Just now",
+    });
+    post.replies = post.comments.length;
+
+    writeDb(db);
+    return res.status(201).json(buildClientState(db, req.account.id));
+});
+
+app.post("/api/messages", requireAuth, (req, res) => {
+    const db = req.db;
+    const recipientId = String(req.body?.recipientId || "").trim();
+    const body = String(req.body?.body || "").trim();
+    const recipient = db.accounts.find((account) => account.id === recipientId);
+
+    if (!recipient) {
+        return res.status(404).json({ error: "Recipient not found." });
+    }
+
+    if (recipient.id === req.account.id) {
+        return res.status(400).json({ error: "You cannot message yourself." });
+    }
+
+    if (!body) {
+        return res.status(400).json({ error: "Message content is required." });
+    }
+
+    db.messages.push({
+        id: `dm-${Date.now()}`,
+        senderId: req.account.id,
+        recipientId: recipient.id,
+        body,
+        time: "Just now",
+    });
+
+    writeDb(db);
+    return res.status(201).json(buildClientState(db, req.account.id));
 });
 
 app.post("/api/notifications/clear", requireAuth, (req, res) => {
@@ -687,7 +849,7 @@ app.post("/api/notifications/clear", requireAuth, (req, res) => {
         unread: false,
     }));
     writeDb(req.db);
-    return res.json(buildClientState(req.db));
+    return res.json(buildClientState(req.db, req.account.id));
 });
 
 app.listen(PORT, () => {

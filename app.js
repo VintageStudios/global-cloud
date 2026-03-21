@@ -16,6 +16,7 @@ const appState = {
     activeAccountId: null,
     admin: null,
     selectedChatCommunityId: "",
+    selectedDirectAccountId: "",
 };
 
 const els = {
@@ -28,7 +29,9 @@ const els = {
     registerName: document.querySelector("#register-name"),
     registerEmail: document.querySelector("#register-email"),
     registerPassword: document.querySelector("#register-password"),
+    registerBirthdate: document.querySelector("#register-birthdate"),
     registerBio: document.querySelector("#register-bio"),
+    registerAgeCheck: document.querySelector("#register-age-check"),
     registerTerms: document.querySelector("#register-terms"),
     logoutButton: document.querySelector("#logout-button"),
     ownerName: document.querySelector("#owner-name"),
@@ -66,7 +69,10 @@ const els = {
     notificationBell: document.querySelector("#notification-bell"),
     notificationCount: document.querySelector("#notification-count"),
     notificationPanelCount: document.querySelector("#notification-panel-count"),
+    dmRecipientSelect: document.querySelector("#dm-recipient-select"),
     messageList: document.querySelector("#message-list"),
+    messageForm: document.querySelector("#message-form"),
+    messageInput: document.querySelector("#message-input"),
     communityForm: document.querySelector("#community-form"),
     communityName: document.querySelector("#community-name"),
     communityTopic: document.querySelector("#community-topic"),
@@ -437,10 +443,14 @@ function renderGroupChat() {
 
 function renderFeed() {
     els.feedList.innerHTML = "";
+    const active = getActiveAccount();
 
     appState.posts.forEach((post) => {
         const account = appState.accounts.find((entry) => entry.id === post.authorId);
         const community = post.communityId ? appState.communities.find((entry) => entry.id === post.communityId) : null;
+        const comments = Array.isArray(post.comments) ? post.comments : [];
+        const likedBy = Array.isArray(post.likedBy) ? post.likedBy : [];
+        const liked = active ? likedBy.includes(active.id) : false;
         const article = document.createElement("article");
         article.className = "post-card";
 
@@ -475,10 +485,30 @@ function renderFeed() {
                     <span class="pill">#${escapeHtml(post.tag.replace(/\s+/g, ""))}</span>
                     ${community ? `<span class="pill">${escapeHtml(community.name)}</span>` : ""}
                 </div>
-                <div class="meta-actions">
-                    <span class="pill">${post.likes} likes</span>
-                    <span class="pill">${post.replies} replies</span>
+                <div class="meta-actions post-actions">
+                    <button class="toggle-btn ${liked ? "active" : ""}" data-like-post="${post.id}" type="button">${liked ? "Liked" : "Like"} · ${likedBy.length}</button>
+                    <span class="pill">${comments.length} comments</span>
                 </div>
+            </div>
+            <div class="comment-block">
+                <div class="comment-list">
+                    ${comments.length === 0 ? '<div class="empty-state compact-empty">No comments yet.</div>' : comments.map((comment) => {
+                        const commentAuthor = appState.accounts.find((entry) => entry.id === comment.authorId);
+                        return `
+                            <article class="comment-item">
+                                <div class="comment-head">
+                                    <strong>${escapeHtml(commentAuthor?.name || "Unknown")}</strong>
+                                    <span>${escapeHtml(comment.createdAt || "Just now")}</span>
+                                </div>
+                                <p>${escapeHtml(comment.content)}</p>
+                            </article>
+                        `;
+                    }).join("")}
+                </div>
+                <form class="comment-form" data-comment-form="${post.id}">
+                    <input type="text" maxlength="220" placeholder="Write a comment">
+                    <button class="ghost-btn" type="submit">Reply</button>
+                </form>
             </div>
         `;
 
@@ -504,14 +534,59 @@ function renderNotifications() {
     });
 }
 
+function renderDirectMessageOptions() {
+    const active = getActiveAccount();
+    const previous = appState.selectedDirectAccountId;
+    const options = appState.accounts.filter((account) => active && account.id !== active.id);
+
+    els.dmRecipientSelect.innerHTML = "";
+
+    if (options.length === 0) {
+        appState.selectedDirectAccountId = "";
+        els.dmRecipientSelect.innerHTML = '<option value="">No other members yet</option>';
+        els.dmRecipientSelect.disabled = true;
+        return;
+    }
+
+    options.forEach((account) => {
+        const option = document.createElement("option");
+        option.value = account.id;
+        option.textContent = `${account.name} (${account.email})`;
+        els.dmRecipientSelect.appendChild(option);
+    });
+
+    appState.selectedDirectAccountId = options.some((account) => account.id === previous) ? previous : options[0].id;
+    els.dmRecipientSelect.value = appState.selectedDirectAccountId;
+    els.dmRecipientSelect.disabled = false;
+}
+
 function renderMessages() {
     els.messageList.innerHTML = "";
+    const active = getActiveAccount();
+    const selectedId = appState.selectedDirectAccountId;
 
-    appState.messages.forEach((message) => {
+    if (!active || !selectedId) {
+        els.messageList.innerHTML = '<div class="empty-state">Choose another account to start a private chat.</div>';
+        return;
+    }
+
+    const conversation = appState.messages.filter((message) => (
+        (message.senderId === active.id && message.recipientId === selectedId)
+        || (message.senderId === selectedId && message.recipientId === active.id)
+    ));
+
+    if (conversation.length === 0) {
+        els.messageList.innerHTML = '<div class="empty-state">No private messages yet. Start the conversation.</div>';
+        return;
+    }
+
+    conversation.forEach((message) => {
+        const isOwn = message.senderId === active.id;
+        const sender = appState.accounts.find((account) => account.id === message.senderId);
         const item = document.createElement("article");
-        item.className = "message-card";
+        item.className = `message-card${isOwn ? " own-message" : ""}`;
         item.innerHTML = `
-            <strong>${escapeHtml(message.sender)}</strong>
+            <strong>${escapeHtml(sender?.name || "Unknown")}</strong>
             <p>${escapeHtml(message.body)}</p>
             <span>${escapeHtml(message.time)}</span>
         `;
@@ -531,6 +606,7 @@ function renderAll() {
     renderGroupChat();
     renderFeed();
     renderNotifications();
+    renderDirectMessageOptions();
     renderMessages();
     updateCounts();
 }
@@ -619,6 +695,16 @@ async function handleRegister(event) {
         return;
     }
 
+    if (!els.registerAgeCheck.checked) {
+        showToast("Age confirmation required", "You must confirm that you are at least 13 years old.");
+        return;
+    }
+
+    if (!els.registerBirthdate.value) {
+        showToast("Birth date required", "Enter your date of birth to continue.");
+        return;
+    }
+
     try {
         const result = await api("/api/auth/register", {
             method: "POST",
@@ -626,7 +712,9 @@ async function handleRegister(event) {
                 name: els.registerName.value.trim(),
                 email: els.registerEmail.value.trim(),
                 password: els.registerPassword.value,
+                birthDate: els.registerBirthdate.value,
                 bio: els.registerBio.value.trim(),
+                acceptedAge13Plus: els.registerAgeCheck.checked,
                 acceptedTerms: els.registerTerms.checked,
             }),
         });
@@ -828,6 +916,50 @@ async function handleCommunityActions(event) {
     }
 }
 
+async function handleFeedActions(event) {
+    const likeButton = event.target.closest("[data-like-post]");
+    if (likeButton) {
+        try {
+            const state = await api(`/api/posts/${likeButton.dataset.likePost}/like`, {
+                method: "POST",
+                body: JSON.stringify({}),
+            });
+            syncState(state);
+            renderFeed();
+            return;
+        } catch (error) {
+            showToast("Like failed", error.message);
+            return;
+        }
+    }
+}
+
+async function handleCommentSubmit(event) {
+    const form = event.target.closest("[data-comment-form]");
+    if (!form) {
+        return;
+    }
+
+    event.preventDefault();
+    const input = form.querySelector("input");
+    const content = input?.value.trim() || "";
+
+    if (!content) {
+        return;
+    }
+
+    try {
+        const state = await api(`/api/posts/${form.dataset.commentForm}/comments`, {
+            method: "POST",
+            body: JSON.stringify({ content }),
+        });
+        syncState(state);
+        renderFeed();
+    } catch (error) {
+        showToast("Comment failed", error.message);
+    }
+}
+
 async function handleAdminActions(event) {
     const assignButton = event.target.closest("[data-assign-badge]");
     const revokeButton = event.target.closest("[data-revoke-sessions]");
@@ -888,6 +1020,40 @@ function handleChatCommunityChange() {
     renderGroupChat();
 }
 
+function handleDirectRecipientChange() {
+    appState.selectedDirectAccountId = els.dmRecipientSelect.value;
+    renderMessages();
+}
+
+async function handleDirectMessageSubmit(event) {
+    event.preventDefault();
+
+    const recipientId = appState.selectedDirectAccountId;
+    const body = els.messageInput.value.trim();
+
+    if (!recipientId) {
+        showToast("No recipient selected", "Choose a member before sending a message.");
+        return;
+    }
+
+    if (!body) {
+        return;
+    }
+
+    try {
+        const state = await api("/api/messages", {
+            method: "POST",
+            body: JSON.stringify({ recipientId, body }),
+        });
+        syncState(state);
+        renderDirectMessageOptions();
+        renderMessages();
+        els.messageForm.reset();
+    } catch (error) {
+        showToast("Message failed", error.message);
+    }
+}
+
 async function pollLiveState() {
     if (!authToken) {
         return;
@@ -933,10 +1099,14 @@ els.postForm.addEventListener("submit", handlePostSubmit);
 els.postUpload.addEventListener("change", handleUploadPreview);
 els.chatCommunitySelect.addEventListener("change", handleChatCommunityChange);
 els.chatForm.addEventListener("submit", handleSendChatMessage);
+els.dmRecipientSelect.addEventListener("change", handleDirectRecipientChange);
+els.messageForm.addEventListener("submit", handleDirectMessageSubmit);
 els.postContent.addEventListener("input", updateCounts);
 els.notificationBell.addEventListener("click", handleClearNotifications);
 els.adminAccountList.addEventListener("click", handleAdminActions);
 els.communityList.addEventListener("click", handleCommunityActions);
+els.feedList.addEventListener("click", handleFeedActions);
+els.feedList.addEventListener("submit", handleCommentSubmit);
 els.focusAccount.addEventListener("click", () => {
     document.querySelector("#communities").scrollIntoView({ behavior: "smooth" });
 });

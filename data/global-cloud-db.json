@@ -14,7 +14,12 @@
       "badgeIds": [
         "founder",
         "verified-owner"
-      ]
+      ],
+      "acceptedTermsAt": "2026-03-21T01:29:30.452Z",
+      "acceptedTermsVersion": "2026-03-20",
+      "ageVerifiedAt": "2026-03-21T01:29:30.452Z",
+      "ageVerified13Plus": true,
+      "birthDate": "1990-01-01"
     }
   ],
   "communities": [
@@ -39,7 +44,9 @@
       "createdAt": "2m ago",
       "upload": null,
       "likes": 2700,
-      "replies": 914
+      "replies": 914,
+      "likedBy": [],
+      "comments": []
     }
   ],
   "notifications": [],

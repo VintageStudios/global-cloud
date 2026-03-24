@@ -74,3 +74,42 @@
     "cloud-makers": []
   }
 }
+
+{
+  "accounts": [
+    {
+      "id": "spetial-person",
+      "name": "Tron",
+      "email": "sonyunbound@gmail.com",
+      "bio": "Platform founder and primary administrator.",
+      "owner": fasle,
+      "verified": true,
+      "joinedCommunities": [
+        "cloud-makers"
+      ],
+      "passwordHash": "9630b46414cc24c6ea112d0bcb06f012:45aa7177f593b58f2630fa4f2eafc87e56f6cfc6b44740ef7623ecea12f2fe42dc6e04aad87477fbbe3d990689408f64f7e450e36b17a440769166ef8bd9e487",
+      "badgeIds": [
+        "verified",
+      ],
+      "acceptedTermsAt": "2026-03-21T01:29:30.452Z",
+      "acceptedTermsVersion": "2026-03-20",
+      "ageVerifiedAt": "2026-03-21T01:29:30.452Z",
+      "ageVerified13Plus": true,
+      "birthDate": "1990-01-01"
+    }
+  ],
+  "communities": [
+  ],
+  "posts": [
+  ],
+  "notifications": [],
+  "messages": [],
+  "liveNotificationIndex": 0,
+  "sessions": [],
+  "badges": [
+    {
+      "id": "friend",
+      "name": "Friend",
+      "color": "blue"
+    },
+}

@@ -3,6 +3,7 @@ const Database = require("better-sqlite3");
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const { Pool } = require("pg");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,6 +17,7 @@ const DEMO_COMMUNITY_IDS = new Set(["world-lens", "signal-lab"]);
 const DEMO_POST_IDS = new Set(["post-mateo", "post-priya"]);
 const ADMIN_BADGE_ID = "moderator";
 let sqliteDb = null;
+let pgPool = null;
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString("hex")) {
     const hash = crypto.scryptSync(password, salt, 64).toString("hex");
@@ -290,15 +292,76 @@ function getSqliteDb() {
     return sqliteDb;
 }
 
-function ensureDb() {
+function hasPostgresConfig() {
+    return Boolean(process.env.DATABASE_URL);
+}
+
+function getPostgresPool() {
+    if (!hasPostgresConfig()) {
+        return null;
+    }
+
+    if (pgPool) {
+        return pgPool;
+    }
+
+    const useSsl = !String(process.env.DATABASE_URL).includes("localhost");
+    pgPool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: useSsl ? { rejectUnauthorized: false } : false,
+    });
+    return pgPool;
+}
+
+function readLegacySeedState() {
+    if (fs.existsSync(SQLITE_DB_PATH)) {
+        try {
+            const dbFile = getSqliteDb();
+            const stateRow = dbFile.prepare("SELECT value FROM app_state WHERE key = ?").get("state");
+            if (stateRow?.value) {
+                return JSON.parse(stateRow.value);
+            }
+        } catch (error) {
+            console.warn("SQLite seed read failed:", error.message);
+        }
+    }
+
+    if (fs.existsSync(LEGACY_JSON_PATH)) {
+        return JSON.parse(fs.readFileSync(LEGACY_JSON_PATH, "utf8"));
+    }
+
+    return JSON.parse(JSON.stringify(defaultDb));
+}
+
+async function ensureDb() {
+    if (hasPostgresConfig()) {
+        const pool = getPostgresPool();
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS app_state (
+                key TEXT PRIMARY KEY,
+                value JSONB NOT NULL
+            )
+        `);
+
+        const stateResult = await pool.query("SELECT value FROM app_state WHERE key = $1", ["state"]);
+        if (stateResult.rowCount === 0) {
+            const { db } = normalizeDbState(readLegacySeedState());
+            await pool.query("INSERT INTO app_state (key, value) VALUES ($1, $2::jsonb)", ["state", JSON.stringify(db)]);
+            return;
+        }
+
+        const { db, changed } = normalizeDbState(stateResult.rows[0].value);
+        if (changed) {
+            await pool.query("UPDATE app_state SET value = $1::jsonb WHERE key = $2", [JSON.stringify(db), "state"]);
+        }
+        return;
+    }
+
     const dbFile = getSqliteDb();
     const stateRow = dbFile.prepare("SELECT value FROM app_state WHERE key = ?").get("state");
 
     if (!stateRow) {
-        const seedState = fs.existsSync(LEGACY_JSON_PATH)
-            ? JSON.parse(fs.readFileSync(LEGACY_JSON_PATH, "utf8"))
-            : JSON.parse(JSON.stringify(defaultDb));
-        const { db } = normalizeDbState(seedState);
+        const { db } = normalizeDbState(readLegacySeedState());
         dbFile.prepare("INSERT INTO app_state (key, value) VALUES (?, ?)").run("state", JSON.stringify(db));
         return;
     }
@@ -310,14 +373,30 @@ function ensureDb() {
     }
 }
 
-function readDb() {
-    ensureDb();
+async function readDb() {
+    await ensureDb();
+
+    if (hasPostgresConfig()) {
+        const pool = getPostgresPool();
+        const result = await pool.query("SELECT value FROM app_state WHERE key = $1", ["state"]);
+        return result.rowCount ? result.rows[0].value : JSON.parse(JSON.stringify(defaultDb));
+    }
+
     const dbFile = getSqliteDb();
     const row = dbFile.prepare("SELECT value FROM app_state WHERE key = ?").get("state");
     return row ? JSON.parse(row.value) : JSON.parse(JSON.stringify(defaultDb));
 }
 
-function writeDb(db) {
+async function writeDb(db) {
+    if (hasPostgresConfig()) {
+        const pool = getPostgresPool();
+        await pool.query(
+            "INSERT INTO app_state (key, value) VALUES ($1, $2::jsonb) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
+            ["state", JSON.stringify(db)],
+        );
+        return;
+    }
+
     const dbFile = getSqliteDb();
     dbFile.prepare("INSERT INTO app_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
         .run("state", JSON.stringify(db));
@@ -406,8 +485,8 @@ function getToken(req) {
     return authHeader.slice(7);
 }
 
-function requireAuth(req, res, next) {
-    const db = readDb();
+async function requireAuth(req, res, next) {
+    const db = await readDb();
     const token = getToken(req);
     const session = db.sessions.find((entry) => entry.token === token);
 
@@ -486,8 +565,8 @@ app.use((req, res, next) => {
 });
 app.use(express.static(__dirname));
 
-app.post("/api/auth/register", (req, res) => {
-    const db = readDb();
+app.post("/api/auth/register", async (req, res) => {
+    const db = await readDb();
     const { name, email, password, bio, acceptedTerms, birthDate, acceptedAge13Plus } = req.body;
 
     if (!name || !email || !password) {
@@ -536,7 +615,7 @@ app.post("/api/auth/register", (req, res) => {
     db.accounts.push(account);
     const token = createSession(db, account.id);
     addNotification(db, "New account created", `${name} can now post and join communities.`);
-    writeDb(db);
+    await writeDb(db);
 
     return res.status(201).json({
         token,
@@ -545,8 +624,8 @@ app.post("/api/auth/register", (req, res) => {
     });
 });
 
-app.post("/api/auth/login", (req, res) => {
-    const db = readDb();
+app.post("/api/auth/login", async (req, res) => {
+    const db = await readDb();
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -559,7 +638,7 @@ app.post("/api/auth/login", (req, res) => {
     }
 
     const token = createSession(db, account.id);
-    writeDb(db);
+    await writeDb(db);
 
     return res.json({
         token,
@@ -568,24 +647,24 @@ app.post("/api/auth/login", (req, res) => {
     });
 });
 
-app.get("/api/auth/me", requireAuth, (req, res) => {
+app.get("/api/auth/me", requireAuth, async (req, res) => {
     return res.json({
         account: sanitizeAccount(req.account),
         state: buildClientState(req.db, req.account.id),
     });
 });
 
-app.post("/api/auth/logout", requireAuth, (req, res) => {
+app.post("/api/auth/logout", requireAuth, async (req, res) => {
     req.db.sessions = req.db.sessions.filter((entry) => entry.token !== req.session.token);
-    writeDb(req.db);
+    await writeDb(req.db);
     return res.json({ success: true });
 });
 
-app.get("/api/admin/overview", requireAuth, requireAdmin, (req, res) => {
+app.get("/api/admin/overview", requireAuth, requireAdmin, async (req, res) => {
     return res.json(buildAdminState(req.db));
 });
 
-app.post("/api/admin/badges", requireAuth, requireAdmin, (req, res) => {
+app.post("/api/admin/badges", requireAuth, requireAdmin, async (req, res) => {
     const { name, color } = req.body;
 
     if (!name || !color) {
@@ -598,11 +677,11 @@ app.post("/api/admin/badges", requireAuth, requireAdmin, (req, res) => {
     }
 
     req.db.badges.push({ id, name, color: String(color).toLowerCase() });
-    writeDb(req.db);
+    await writeDb(req.db);
     return res.status(201).json(buildAdminState(req.db));
 });
 
-app.post("/api/admin/notifications", requireAuth, requireOwner, (req, res) => {
+app.post("/api/admin/notifications", requireAuth, requireOwner, async (req, res) => {
     const title = String(req.body?.title || "").trim();
     const body = String(req.body?.body || "").trim();
 
@@ -611,14 +690,14 @@ app.post("/api/admin/notifications", requireAuth, requireOwner, (req, res) => {
     }
 
     addNotification(req.db, title, body);
-    writeDb(req.db);
+    await writeDb(req.db);
     return res.status(201).json({
         state: buildClientState(req.db, req.account.id),
         admin: buildAdminState(req.db),
     });
 });
 
-app.post("/api/admin/accounts/:id/toggle-badge", requireAuth, requireAdmin, (req, res) => {
+app.post("/api/admin/accounts/:id/toggle-badge", requireAuth, requireAdmin, async (req, res) => {
     const { badgeId } = req.body;
     const account = req.db.accounts.find((entry) => entry.id === req.params.id);
     const badge = req.db.badges.find((entry) => entry.id === badgeId);
@@ -633,11 +712,11 @@ app.post("/api/admin/accounts/:id/toggle-badge", requireAuth, requireAdmin, (req
         account.badgeIds.push(badgeId);
     }
 
-    writeDb(req.db);
+    await writeDb(req.db);
     return res.json(buildAdminState(req.db));
 });
 
-app.post("/api/admin/accounts/:id/reset-password", requireAuth, requireAdmin, (req, res) => {
+app.post("/api/admin/accounts/:id/reset-password", requireAuth, requireAdmin, async (req, res) => {
     const account = req.db.accounts.find((entry) => entry.id === req.params.id);
 
     if (!account) {
@@ -647,7 +726,7 @@ app.post("/api/admin/accounts/:id/reset-password", requireAuth, requireAdmin, (r
     const temporaryPassword = generateTempPassword();
     account.passwordHash = hashPassword(temporaryPassword);
     req.db.sessions = req.db.sessions.filter((session) => session.accountId !== account.id);
-    writeDb(req.db);
+    await writeDb(req.db);
 
     return res.json({
         accountId: account.id,
@@ -656,7 +735,7 @@ app.post("/api/admin/accounts/:id/reset-password", requireAuth, requireAdmin, (r
     });
 });
 
-app.post("/api/admin/accounts/:id/revoke-sessions", requireAuth, requireAdmin, (req, res) => {
+app.post("/api/admin/accounts/:id/revoke-sessions", requireAuth, requireAdmin, async (req, res) => {
     const account = req.db.accounts.find((entry) => entry.id === req.params.id);
 
     if (!account) {
@@ -664,15 +743,15 @@ app.post("/api/admin/accounts/:id/revoke-sessions", requireAuth, requireAdmin, (
     }
 
     req.db.sessions = req.db.sessions.filter((session) => session.accountId !== account.id);
-    writeDb(req.db);
+    await writeDb(req.db);
     return res.json(buildAdminState(req.db));
 });
 
-app.get("/api/state", requireAuth, (req, res) => {
+app.get("/api/state", requireAuth, async (req, res) => {
     res.json(buildClientState(req.db, req.account.id));
 });
 
-app.post("/api/communities", requireAuth, (req, res) => {
+app.post("/api/communities", requireAuth, async (req, res) => {
     const db = req.db;
     const { name, topic, description } = req.body;
 
@@ -700,11 +779,11 @@ app.post("/api/communities", requireAuth, (req, res) => {
     }
 
     addNotification(db, "Community created", `${req.account.name} created ${name}.`);
-    writeDb(db);
+    await writeDb(db);
     return res.status(201).json(buildClientState(db, req.account.id));
 });
 
-app.post("/api/communities/:id/toggle-membership", requireAuth, (req, res) => {
+app.post("/api/communities/:id/toggle-membership", requireAuth, async (req, res) => {
     const db = req.db;
     const community = db.communities.find((entry) => entry.id === req.params.id);
 
@@ -725,11 +804,11 @@ app.post("/api/communities/:id/toggle-membership", requireAuth, (req, res) => {
         addNotification(db, "Community joined", `${req.account.name} joined ${community.name}.`);
     }
 
-    writeDb(db);
+    await writeDb(db);
     return res.json(buildClientState(db, req.account.id));
 });
 
-app.get("/api/communities/:id/messages", requireAuth, (req, res) => {
+app.get("/api/communities/:id/messages", requireAuth, async (req, res) => {
     const db = req.db;
     const community = db.communities.find((entry) => entry.id === req.params.id);
 
@@ -747,7 +826,7 @@ app.get("/api/communities/:id/messages", requireAuth, (req, res) => {
     });
 });
 
-app.post("/api/communities/:id/messages", requireAuth, (req, res) => {
+app.post("/api/communities/:id/messages", requireAuth, async (req, res) => {
     const db = req.db;
     const { content } = req.body;
     const community = db.communities.find((entry) => entry.id === req.params.id);
@@ -775,11 +854,11 @@ app.post("/api/communities/:id/messages", requireAuth, (req, res) => {
         createdAt: "Just now",
     });
 
-    writeDb(db);
+    await writeDb(db);
     return res.status(201).json(buildClientState(db, req.account.id));
 });
 
-app.post("/api/posts", requireAuth, (req, res) => {
+app.post("/api/posts", requireAuth, async (req, res) => {
     const db = req.db;
     const { tag, communityId, content, upload } = req.body;
 
@@ -804,11 +883,11 @@ app.post("/api/posts", requireAuth, (req, res) => {
         : "the global feed";
 
     addNotification(db, "Post published", `${req.account.name} shared a post to ${destination}.`);
-    writeDb(db);
+    await writeDb(db);
     return res.status(201).json(buildClientState(db, req.account.id));
 });
 
-app.post("/api/posts/:id/like", requireAuth, (req, res) => {
+app.post("/api/posts/:id/like", requireAuth, async (req, res) => {
     const db = req.db;
     const post = db.posts.find((entry) => entry.id === req.params.id);
 
@@ -825,11 +904,11 @@ app.post("/api/posts/:id/like", requireAuth, (req, res) => {
     }
 
     post.likes = post.likedBy.length;
-    writeDb(db);
+    await writeDb(db);
     return res.json(buildClientState(db, req.account.id));
 });
 
-app.post("/api/posts/:id/comments", requireAuth, (req, res) => {
+app.post("/api/posts/:id/comments", requireAuth, async (req, res) => {
     const db = req.db;
     const post = db.posts.find((entry) => entry.id === req.params.id);
     const content = String(req.body?.content || "").trim();
@@ -851,11 +930,11 @@ app.post("/api/posts/:id/comments", requireAuth, (req, res) => {
     });
     post.replies = post.comments.length;
 
-    writeDb(db);
+    await writeDb(db);
     return res.status(201).json(buildClientState(db, req.account.id));
 });
 
-app.post("/api/messages", requireAuth, (req, res) => {
+app.post("/api/messages", requireAuth, async (req, res) => {
     const db = req.db;
     const recipientId = String(req.body?.recipientId || "").trim();
     const body = String(req.body?.body || "").trim();
@@ -881,20 +960,20 @@ app.post("/api/messages", requireAuth, (req, res) => {
         time: "Just now",
     });
 
-    writeDb(db);
+    await writeDb(db);
     return res.status(201).json(buildClientState(db, req.account.id));
 });
 
-app.post("/api/notifications/clear", requireAuth, (req, res) => {
+app.post("/api/notifications/clear", requireAuth, async (req, res) => {
     req.db.notifications = req.db.notifications.map((notification) => ({
         ...notification,
         unread: false,
     }));
-    writeDb(req.db);
+    await writeDb(req.db);
     return res.json(buildClientState(req.db, req.account.id));
 });
 
-app.listen(PORT, () => {
-    ensureDb();
+app.listen(PORT, async () => {
+    await ensureDb();
     console.log(`Global Cloud server running at http://localhost:${PORT}`);
 });

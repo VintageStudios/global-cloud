@@ -333,26 +333,574 @@ function readLegacySeedState() {
     return JSON.parse(JSON.stringify(defaultDb));
 }
 
+async function ensurePostgresSchema(client) {
+    await client.query(`
+        CREATE TABLE IF NOT EXISTS accounts (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            bio TEXT NOT NULL,
+            owner BOOLEAN NOT NULL,
+            verified BOOLEAN NOT NULL,
+            password_hash TEXT NOT NULL,
+            accepted_terms_at TEXT,
+            accepted_terms_version TEXT,
+            age_verified_at TEXT,
+            age_verified_13_plus BOOLEAN NOT NULL DEFAULT FALSE,
+            birth_date TEXT,
+            sort_index INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS badges (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            color TEXT NOT NULL,
+            sort_index INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS account_badges (
+            account_id TEXT NOT NULL,
+            badge_id TEXT NOT NULL,
+            sort_index INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (account_id, badge_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS communities (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            description TEXT NOT NULL,
+            creator_id TEXT NOT NULL,
+            sort_index INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS community_members (
+            community_id TEXT NOT NULL,
+            account_id TEXT NOT NULL,
+            community_sort_index INTEGER NOT NULL DEFAULT 0,
+            account_sort_index INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (community_id, account_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS community_messages (
+            id TEXT PRIMARY KEY,
+            community_id TEXT NOT NULL,
+            author_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at_text TEXT NOT NULL,
+            sort_index INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS posts (
+            id TEXT PRIMARY KEY,
+            author_id TEXT NOT NULL,
+            tag TEXT NOT NULL,
+            community_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at_text TEXT NOT NULL,
+            upload_json JSONB,
+            like_count INTEGER NOT NULL DEFAULT 0,
+            reply_count INTEGER NOT NULL DEFAULT 0,
+            sort_index INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS post_likes (
+            post_id TEXT NOT NULL,
+            account_id TEXT NOT NULL,
+            sort_index INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (post_id, account_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS post_comments (
+            id TEXT PRIMARY KEY,
+            post_id TEXT NOT NULL,
+            author_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at_text TEXT NOT NULL,
+            sort_index INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            time_text TEXT NOT NULL,
+            unread BOOLEAN NOT NULL DEFAULT TRUE,
+            sort_index INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS direct_messages (
+            id TEXT PRIMARY KEY,
+            sender_id TEXT NOT NULL,
+            recipient_id TEXT NOT NULL,
+            body TEXT NOT NULL,
+            time_text TEXT NOT NULL,
+            sort_index INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS sessions (
+            token TEXT PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS app_meta (
+            key TEXT PRIMARY KEY,
+            value_json JSONB NOT NULL
+        );
+    `);
+
+    await client.query(`
+        ALTER TABLE posts ADD COLUMN IF NOT EXISTS like_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE posts ADD COLUMN IF NOT EXISTS reply_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE community_members ADD COLUMN IF NOT EXISTS community_sort_index INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE community_members ADD COLUMN IF NOT EXISTS account_sort_index INTEGER NOT NULL DEFAULT 0;
+    `);
+}
+
+async function readLegacyPostgresState(client) {
+    const existsResult = await client.query("SELECT to_regclass('public.app_state') AS reg");
+    if (!existsResult.rows[0]?.reg) {
+        return null;
+    }
+
+    const stateResult = await client.query("SELECT value FROM app_state WHERE key = $1", ["state"]);
+    return stateResult.rowCount ? stateResult.rows[0].value : null;
+}
+
+async function syncStateToPostgres(client, db) {
+    await client.query("BEGIN");
+
+    try {
+        await client.query(`
+            DELETE FROM account_badges;
+            DELETE FROM community_members;
+            DELETE FROM community_messages;
+            DELETE FROM post_likes;
+            DELETE FROM post_comments;
+            DELETE FROM notifications;
+            DELETE FROM direct_messages;
+            DELETE FROM sessions;
+            DELETE FROM posts;
+            DELETE FROM communities;
+            DELETE FROM badges;
+            DELETE FROM accounts;
+            DELETE FROM app_meta;
+        `);
+
+        for (const [index, account] of (db.accounts || []).entries()) {
+            await client.query(`
+                INSERT INTO accounts (
+                    id, name, email, bio, owner, verified, password_hash,
+                    accepted_terms_at, accepted_terms_version, age_verified_at,
+                    age_verified_13_plus, birth_date, sort_index
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            `, [
+                account.id,
+                account.name,
+                account.email,
+                account.bio,
+                Boolean(account.owner),
+                Boolean(account.verified),
+                account.passwordHash,
+                account.acceptedTermsAt,
+                account.acceptedTermsVersion,
+                account.ageVerifiedAt,
+                Boolean(account.ageVerified13Plus),
+                account.birthDate,
+                index,
+            ]);
+
+            for (const [badgeIndex, badgeId] of (account.badgeIds || []).entries()) {
+                await client.query(
+                    "INSERT INTO account_badges (account_id, badge_id, sort_index) VALUES ($1, $2, $3)",
+                    [account.id, badgeId, badgeIndex],
+                );
+            }
+        }
+
+        for (const [index, badge] of (db.badges || []).entries()) {
+            await client.query(
+                "INSERT INTO badges (id, name, color, sort_index) VALUES ($1, $2, $3, $4)",
+                [badge.id, badge.name, badge.color, index],
+            );
+        }
+
+        for (const [index, community] of (db.communities || []).entries()) {
+            await client.query(`
+                INSERT INTO communities (id, name, topic, description, creator_id, sort_index)
+                VALUES ($1, $2, $3, $4, $5, $6)
+            `, [
+                community.id,
+                community.name,
+                community.topic,
+                community.description,
+                community.creatorId,
+                index,
+            ]);
+        }
+
+        const membershipMap = new Map();
+        (db.communities || []).forEach((community) => {
+            (community.members || []).forEach((accountId, index) => {
+                const key = `${community.id}::${accountId}`;
+                membershipMap.set(key, {
+                    communityId: community.id,
+                    accountId,
+                    communitySortIndex: index,
+                    accountSortIndex: 999999,
+                });
+            });
+        });
+        (db.accounts || []).forEach((account) => {
+            (account.joinedCommunities || []).forEach((communityId, index) => {
+                const key = `${communityId}::${account.id}`;
+                const existing = membershipMap.get(key) || {
+                    communityId,
+                    accountId: account.id,
+                    communitySortIndex: 999999,
+                    accountSortIndex: index,
+                };
+                existing.accountSortIndex = index;
+                membershipMap.set(key, existing);
+            });
+        });
+
+        for (const membership of membershipMap.values()) {
+            await client.query(`
+                INSERT INTO community_members (community_id, account_id, community_sort_index, account_sort_index)
+                VALUES ($1, $2, $3, $4)
+            `, [
+                membership.communityId,
+                membership.accountId,
+                membership.communitySortIndex,
+                membership.accountSortIndex,
+            ]);
+        }
+
+        for (const community of (db.communities || [])) {
+            const messages = db.communityMessages?.[community.id] || [];
+            for (const [index, message] of messages.entries()) {
+                await client.query(`
+                    INSERT INTO community_messages (id, community_id, author_id, content, created_at_text, sort_index)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                `, [
+                    message.id,
+                    community.id,
+                    message.authorId,
+                    message.content,
+                    message.createdAt || "Just now",
+                    index,
+                ]);
+            }
+        }
+
+        for (const [index, post] of (db.posts || []).entries()) {
+            await client.query(`
+                INSERT INTO posts (
+                    id, author_id, tag, community_id, content, created_at_text,
+                    upload_json, like_count, reply_count, sort_index
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)
+            `, [
+                post.id,
+                post.authorId,
+                post.tag,
+                post.communityId || "",
+                post.content,
+                post.createdAt || "Just now",
+                JSON.stringify(post.upload || null),
+                Number(post.likes || 0),
+                Number(post.replies || 0),
+                index,
+            ]);
+
+            for (const [likeIndex, accountId] of (post.likedBy || []).entries()) {
+                await client.query(
+                    "INSERT INTO post_likes (post_id, account_id, sort_index) VALUES ($1, $2, $3)",
+                    [post.id, accountId, likeIndex],
+                );
+            }
+
+            for (const [commentIndex, comment] of ((post.comments || []).entries())) {
+                await client.query(`
+                    INSERT INTO post_comments (id, post_id, author_id, content, created_at_text, sort_index)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                `, [
+                    comment.id,
+                    post.id,
+                    comment.authorId,
+                    comment.content,
+                    comment.createdAt || "Just now",
+                    commentIndex,
+                ]);
+            }
+        }
+
+        for (const [index, notification] of (db.notifications || []).entries()) {
+            await client.query(`
+                INSERT INTO notifications (id, title, body, time_text, unread, sort_index)
+                VALUES ($1, $2, $3, $4, $5, $6)
+            `, [
+                notification.id,
+                notification.title,
+                notification.body,
+                notification.time || "Just now",
+                Boolean(notification.unread),
+                index,
+            ]);
+        }
+
+        for (const [index, message] of (db.messages || []).entries()) {
+            await client.query(`
+                INSERT INTO direct_messages (id, sender_id, recipient_id, body, time_text, sort_index)
+                VALUES ($1, $2, $3, $4, $5, $6)
+            `, [
+                message.id,
+                message.senderId,
+                message.recipientId,
+                message.body,
+                message.time || "Just now",
+                index,
+            ]);
+        }
+
+        for (const session of (db.sessions || [])) {
+            await client.query(
+                "INSERT INTO sessions (token, account_id, created_at) VALUES ($1, $2, $3)",
+                [session.token, session.accountId, session.createdAt],
+            );
+        }
+
+        await client.query(
+            "INSERT INTO app_meta (key, value_json) VALUES ($1, $2::jsonb)",
+            ["liveNotificationIndex", JSON.stringify(db.liveNotificationIndex || 0)],
+        );
+
+        await client.query("COMMIT");
+    } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+    }
+}
+
+async function readStateFromPostgres(client) {
+    const [
+        accountResult,
+        badgeResult,
+        accountBadgeResult,
+        communityResult,
+        communityMemberResult,
+        communityMessageResult,
+        postResult,
+        postLikeResult,
+        postCommentResult,
+        notificationResult,
+        directMessageResult,
+        sessionResult,
+        metaResult,
+    ] = await Promise.all([
+        client.query("SELECT * FROM accounts ORDER BY sort_index ASC, id ASC"),
+        client.query("SELECT * FROM badges ORDER BY sort_index ASC, id ASC"),
+        client.query("SELECT * FROM account_badges ORDER BY account_id ASC, sort_index ASC, badge_id ASC"),
+        client.query("SELECT * FROM communities ORDER BY sort_index ASC, id ASC"),
+        client.query("SELECT * FROM community_members"),
+        client.query("SELECT * FROM community_messages ORDER BY community_id ASC, sort_index ASC, id ASC"),
+        client.query("SELECT * FROM posts ORDER BY sort_index ASC, id ASC"),
+        client.query("SELECT * FROM post_likes ORDER BY post_id ASC, sort_index ASC, account_id ASC"),
+        client.query("SELECT * FROM post_comments ORDER BY post_id ASC, sort_index ASC, id ASC"),
+        client.query("SELECT * FROM notifications ORDER BY sort_index ASC, id ASC"),
+        client.query("SELECT * FROM direct_messages ORDER BY sort_index ASC, id ASC"),
+        client.query("SELECT * FROM sessions ORDER BY created_at ASC, token ASC"),
+        client.query("SELECT * FROM app_meta"),
+    ]);
+
+    const accounts = accountResult.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        bio: row.bio,
+        owner: row.owner,
+        verified: row.verified,
+        joinedCommunities: [],
+        badgeIds: [],
+        acceptedTermsAt: row.accepted_terms_at,
+        acceptedTermsVersion: row.accepted_terms_version,
+        ageVerifiedAt: row.age_verified_at,
+        ageVerified13Plus: row.age_verified_13_plus,
+        birthDate: row.birth_date,
+        passwordHash: row.password_hash,
+    }));
+    const accountsById = new Map(accounts.map((account) => [account.id, account]));
+
+    const badges = badgeResult.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        color: row.color,
+    }));
+
+    accountBadgeResult.rows.forEach((row) => {
+        const account = accountsById.get(row.account_id);
+        if (account) {
+            account.badgeIds.push(row.badge_id);
+        }
+    });
+
+    const communities = communityResult.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        topic: row.topic,
+        description: row.description,
+        creatorId: row.creator_id,
+        members: [],
+    }));
+    const communitiesById = new Map(communities.map((community) => [community.id, community]));
+
+    [...communityMemberResult.rows]
+        .sort((a, b) => (
+            a.community_id.localeCompare(b.community_id)
+            || a.community_sort_index - b.community_sort_index
+            || a.account_id.localeCompare(b.account_id)
+        ))
+        .forEach((row) => {
+        const community = communitiesById.get(row.community_id);
+        if (community) {
+            community.members.push(row.account_id);
+        }
+    });
+
+    [...communityMemberResult.rows]
+        .sort((a, b) => (
+            a.account_id.localeCompare(b.account_id)
+            || a.account_sort_index - b.account_sort_index
+            || a.community_id.localeCompare(b.community_id)
+        ))
+        .forEach((row) => {
+            const account = accountsById.get(row.account_id);
+            if (account) {
+                account.joinedCommunities.push(row.community_id);
+            }
+        });
+
+    const communityMessages = {};
+    communityMessageResult.rows.forEach((row) => {
+        if (!Array.isArray(communityMessages[row.community_id])) {
+            communityMessages[row.community_id] = [];
+        }
+        communityMessages[row.community_id].push({
+            id: row.id,
+            authorId: row.author_id,
+            content: row.content,
+            createdAt: row.created_at_text,
+        });
+    });
+    communities.forEach((community) => {
+        if (!Array.isArray(communityMessages[community.id])) {
+            communityMessages[community.id] = [];
+        }
+    });
+
+    const posts = postResult.rows.map((row) => ({
+        id: row.id,
+        authorId: row.author_id,
+        tag: row.tag,
+        communityId: row.community_id,
+        content: row.content,
+        createdAt: row.created_at_text,
+        upload: row.upload_json,
+        likes: Number(row.like_count || 0),
+        replies: Number(row.reply_count || 0),
+        likedBy: [],
+        comments: [],
+    }));
+    const postsById = new Map(posts.map((post) => [post.id, post]));
+
+    postLikeResult.rows.forEach((row) => {
+        const post = postsById.get(row.post_id);
+        if (post) {
+            post.likedBy.push(row.account_id);
+        }
+    });
+
+    postCommentResult.rows.forEach((row) => {
+        const post = postsById.get(row.post_id);
+        if (post) {
+            post.comments.push({
+                id: row.id,
+                authorId: row.author_id,
+                content: row.content,
+                createdAt: row.created_at_text,
+            });
+        }
+    });
+
+    posts.forEach((post) => {
+        post.likes = Math.max(post.likes, post.likedBy.length);
+        post.replies = Math.max(post.replies, post.comments.length);
+    });
+
+    const notifications = notificationResult.rows.map((row) => ({
+        id: row.id,
+        title: row.title,
+        body: row.body,
+        time: row.time_text,
+        unread: row.unread,
+    }));
+
+    const messages = directMessageResult.rows.map((row) => ({
+        id: row.id,
+        senderId: row.sender_id,
+        recipientId: row.recipient_id,
+        body: row.body,
+        time: row.time_text,
+    }));
+
+    const sessions = sessionResult.rows.map((row) => ({
+        token: row.token,
+        accountId: row.account_id,
+        createdAt: row.created_at,
+    }));
+
+    const liveNotificationIndex = Number(
+        metaResult.rows.find((row) => row.key === "liveNotificationIndex")?.value_json ?? 0,
+    ) || 0;
+
+    return {
+        accounts,
+        badges,
+        communities,
+        communityMessages,
+        posts,
+        notifications,
+        messages,
+        sessions,
+        liveNotificationIndex,
+    };
+}
+
 async function ensureDb() {
     if (hasPostgresConfig()) {
         const pool = getPostgresPool();
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS app_state (
-                key TEXT PRIMARY KEY,
-                value JSONB NOT NULL
-            )
-        `);
+        const client = await pool.connect();
 
-        const stateResult = await pool.query("SELECT value FROM app_state WHERE key = $1", ["state"]);
-        if (stateResult.rowCount === 0) {
-            const { db } = normalizeDbState(readLegacySeedState());
-            await pool.query("INSERT INTO app_state (key, value) VALUES ($1, $2::jsonb)", ["state", JSON.stringify(db)]);
-            return;
-        }
+        try {
+            await ensurePostgresSchema(client);
+            const countResult = await client.query("SELECT COUNT(*)::int AS count FROM accounts");
 
-        const { db, changed } = normalizeDbState(stateResult.rows[0].value);
-        if (changed) {
-            await pool.query("UPDATE app_state SET value = $1::jsonb WHERE key = $2", [JSON.stringify(db), "state"]);
+            if (countResult.rows[0].count === 0) {
+                const legacyState = await readLegacyPostgresState(client);
+                const { db } = normalizeDbState(legacyState || readLegacySeedState());
+                await syncStateToPostgres(client, db);
+                return;
+            }
+
+            const loadedState = await readStateFromPostgres(client);
+            const { db, changed } = normalizeDbState(loadedState);
+            if (changed) {
+                await syncStateToPostgres(client, db);
+            }
+        } finally {
+            client.release();
         }
         return;
     }
@@ -378,8 +926,12 @@ async function readDb() {
 
     if (hasPostgresConfig()) {
         const pool = getPostgresPool();
-        const result = await pool.query("SELECT value FROM app_state WHERE key = $1", ["state"]);
-        return result.rowCount ? result.rows[0].value : JSON.parse(JSON.stringify(defaultDb));
+        const client = await pool.connect();
+        try {
+            return await readStateFromPostgres(client);
+        } finally {
+            client.release();
+        }
     }
 
     const dbFile = getSqliteDb();
@@ -390,10 +942,13 @@ async function readDb() {
 async function writeDb(db) {
     if (hasPostgresConfig()) {
         const pool = getPostgresPool();
-        await pool.query(
-            "INSERT INTO app_state (key, value) VALUES ($1, $2::jsonb) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
-            ["state", JSON.stringify(db)],
-        );
+        const client = await pool.connect();
+        try {
+            await ensurePostgresSchema(client);
+            await syncStateToPostgres(client, db);
+        } finally {
+            client.release();
+        }
         return;
     }
 
@@ -899,11 +1454,11 @@ app.post("/api/posts/:id/like", requireAuth, async (req, res) => {
 
     if (post.likedBy.includes(req.account.id)) {
         post.likedBy = post.likedBy.filter((accountId) => accountId !== req.account.id);
+        post.likes = Math.max(0, Number(post.likes || 0) - 1);
     } else {
         post.likedBy.unshift(req.account.id);
+        post.likes = Number(post.likes || 0) + 1;
     }
-
-    post.likes = post.likedBy.length;
     await writeDb(db);
     return res.json(buildClientState(db, req.account.id));
 });
@@ -928,7 +1483,7 @@ app.post("/api/posts/:id/comments", requireAuth, async (req, res) => {
         content,
         createdAt: "Just now",
     });
-    post.replies = post.comments.length;
+    post.replies = Number(post.replies || 0) + 1;
 
     await writeDb(db);
     return res.status(201).json(buildClientState(db, req.account.id));

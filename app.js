@@ -59,6 +59,7 @@ const els = {
     adminNotificationTitle: document.querySelector("#admin-notification-title"),
     adminNotificationBody: document.querySelector("#admin-notification-body"),
     adminAccountList: document.querySelector("#admin-account-list"),
+    adminReportList: document.querySelector("#admin-report-list"),
     communityList: document.querySelector("#community-list"),
     chatCommunitySelect: document.querySelector("#chat-community-select"),
     chatMessages: document.querySelector("#chat-messages"),
@@ -260,6 +261,7 @@ function renderAccounts() {
     appState.accounts.forEach((account) => {
         const isActive = account.id === active.id;
         const following = active.following?.includes(account.id);
+        const blocked = active.blockedAccounts?.includes(account.id);
         const item = document.createElement("article");
         item.className = "account-item";
         item.innerHTML = `
@@ -276,6 +278,8 @@ function renderAccounts() {
                         <span class="pill">${account.joinedCommunities.length} joined</span>
                         <span class="pill">${account.followers?.length || 0} followers</span>
                         ${isActive ? '<span class="pill">You</span>' : `<button class="toggle-btn ${following ? "active" : ""}" data-follow-account="${account.id}" type="button">${following ? "Following" : "Follow"}</button>`}
+                        ${isActive ? "" : `<button class="ghost-btn" data-block-account="${account.id}" type="button">${blocked ? "Unblock" : "Block"}</button>`}
+                        ${isActive ? "" : `<button class="ghost-btn" data-report-account="${account.id}" type="button">Report</button>`}
                     </div>
                 </div>
             </div>
@@ -353,6 +357,41 @@ function renderAdminAccounts() {
         `;
 
         els.adminAccountList.appendChild(item);
+    });
+}
+
+function renderAdminReports() {
+    els.adminReportList.innerHTML = "";
+
+    const reports = appState.admin?.reports || [];
+    if (reports.length === 0) {
+        els.adminReportList.innerHTML = '<div class="empty-state">No reports in the queue.</div>';
+        return;
+    }
+
+    reports.forEach((report) => {
+        const reporter = appState.accounts.find((account) => account.id === report.reporterId);
+        const item = document.createElement("article");
+        item.className = "admin-account-item";
+        item.innerHTML = `
+            <div class="admin-account-head">
+                <div>
+                    <div class="name-row">
+                        <h4>${escapeHtml(report.targetType)} report</h4>
+                        <span class="pill">${escapeHtml(report.status)}</span>
+                    </div>
+                    <p class="admin-account-meta">Reported by ${escapeHtml(reporter?.name || "Unknown")}</p>
+                    <p class="admin-account-meta">Target: ${escapeHtml(report.targetId)}</p>
+                    <p class="admin-account-meta">Reason: ${escapeHtml(report.reason)}</p>
+                    <p class="admin-account-meta">${escapeHtml(report.details || "No extra details provided.")}</p>
+                </div>
+            </div>
+            <div class="admin-account-actions">
+                <button class="ghost-btn" data-report-status="${report.id}" data-report-next="reviewed" type="button">Mark Reviewed</button>
+                <button class="primary-btn" data-report-status="${report.id}" data-report-next="resolved" type="button">Resolve</button>
+            </div>
+        `;
+        els.adminReportList.appendChild(item);
     });
 }
 
@@ -496,6 +535,7 @@ function renderFeed() {
                 <div class="meta-actions post-actions">
                     <button class="toggle-btn ${liked ? "active" : ""}" data-like-post="${post.id}" type="button">${liked ? "Liked" : "Like"} · ${likedBy.length}</button>
                     <span class="pill">${comments.length} comments</span>
+                    <button class="ghost-btn" data-report-post="${post.id}" type="button">Report</button>
                 </div>
             </div>
             <div class="comment-block">
@@ -609,6 +649,7 @@ function renderAll() {
     renderAccounts();
     renderBadges();
     renderAdminAccounts();
+    renderAdminReports();
     renderCommunities();
     renderChatCommunityOptions();
     renderGroupChat();
@@ -926,26 +967,59 @@ async function handleCommunityActions(event) {
 
 async function handleAccountActions(event) {
     const followButton = event.target.closest("[data-follow-account]");
-    if (!followButton) {
-        return;
-    }
+    const blockButton = event.target.closest("[data-block-account]");
+    const reportButton = event.target.closest("[data-report-account]");
 
     try {
-        const state = await api(`/api/accounts/${followButton.dataset.followAccount}/follow`, {
-            method: "POST",
-            body: JSON.stringify({}),
-        });
-        syncState(state);
-        renderAccounts();
-        renderNotifications();
-        showToast("Follow updated", "Your follow list was updated.");
+        if (followButton) {
+            const state = await api(`/api/accounts/${followButton.dataset.followAccount}/follow`, {
+                method: "POST",
+                body: JSON.stringify({}),
+            });
+            syncState(state);
+            renderAccounts();
+            renderNotifications();
+            showToast("Follow updated", "Your follow list was updated.");
+            return;
+        }
+
+        if (blockButton) {
+            const state = await api(`/api/accounts/${blockButton.dataset.blockAccount}/block`, {
+                method: "POST",
+                body: JSON.stringify({}),
+            });
+            syncState(state);
+            renderAll();
+            showToast("Safety updated", "Your blocked account list was updated.");
+            return;
+        }
+
+        if (reportButton) {
+            const result = await api("/api/reports", {
+                method: "POST",
+                body: JSON.stringify({
+                    targetType: "account",
+                    targetId: reportButton.dataset.reportAccount,
+                    reason: "Account safety concern",
+                    details: "Reported from the account list.",
+                }),
+            });
+            syncState(result.state);
+            if (result.admin) {
+                syncAdminState(result.admin);
+            }
+            renderAll();
+            showToast("Report submitted", "The report was sent to the admin review queue.");
+            return;
+        }
     } catch (error) {
-        showToast("Follow failed", error.message);
+        showToast("Account action failed", error.message);
     }
 }
 
 async function handleFeedActions(event) {
     const likeButton = event.target.closest("[data-like-post]");
+    const reportButton = event.target.closest("[data-report-post]");
     if (likeButton) {
         try {
             const state = await api(`/api/posts/${likeButton.dataset.likePost}/like`, {
@@ -957,6 +1031,30 @@ async function handleFeedActions(event) {
             return;
         } catch (error) {
             showToast("Like failed", error.message);
+            return;
+        }
+    }
+
+    if (reportButton) {
+        try {
+            const result = await api("/api/reports", {
+                method: "POST",
+                body: JSON.stringify({
+                    targetType: "post",
+                    targetId: reportButton.dataset.reportPost,
+                    reason: "Post safety concern",
+                    details: "Reported from the feed.",
+                }),
+            });
+            syncState(result.state);
+            if (result.admin) {
+                syncAdminState(result.admin);
+            }
+            renderAll();
+            showToast("Report submitted", "The report was sent to the admin review queue.");
+            return;
+        } catch (error) {
+            showToast("Report failed", error.message);
             return;
         }
     }
@@ -992,6 +1090,7 @@ async function handleAdminActions(event) {
     const assignButton = event.target.closest("[data-assign-badge]");
     const revokeButton = event.target.closest("[data-revoke-sessions]");
     const resetButton = event.target.closest("[data-reset-password]");
+    const reportButton = event.target.closest("[data-report-status]");
 
     try {
         if (assignButton) {
@@ -1032,6 +1131,17 @@ async function handleAdminActions(event) {
             syncAdminState(result.admin);
             renderAdminAccounts();
             showToast("Temporary password created", `New temporary password: ${result.temporaryPassword}`);
+            return;
+        }
+
+        if (reportButton) {
+            const admin = await api(`/api/admin/reports/${reportButton.dataset.reportStatus}/status`, {
+                method: "POST",
+                body: JSON.stringify({ status: reportButton.dataset.reportNext }),
+            });
+            syncAdminState(admin);
+            renderAdminReports();
+            showToast("Report updated", "The report status was updated.");
         }
     } catch (error) {
         showToast("Admin action failed", error.message);
@@ -1132,6 +1242,7 @@ els.messageForm.addEventListener("submit", handleDirectMessageSubmit);
 els.postContent.addEventListener("input", updateCounts);
 els.notificationBell.addEventListener("click", handleClearNotifications);
 els.adminAccountList.addEventListener("click", handleAdminActions);
+els.adminReportList.addEventListener("click", handleAdminActions);
 els.accountList.addEventListener("click", handleAccountActions);
 els.communityList.addEventListener("click", handleCommunityActions);
 els.feedList.addEventListener("click", handleFeedActions);

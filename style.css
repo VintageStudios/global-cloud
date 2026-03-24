@@ -1221,6 +1221,11 @@ textarea {
     margin-top: 4px;
 }
 
+.account-item-foot .ghost-btn,
+.account-item-foot .toggle-btn {
+    padding: 10px 14px;
+}
+
 .community-item-foot {
     margin-top: 12px;
 }

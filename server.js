@@ -52,6 +52,7 @@ function baseAccount(data) {
         badgeIds: data.badgeIds || [],
         followers: data.followers || [],
         following: data.following || [],
+        blockedAccounts: data.blockedAccounts || [],
         acceptedTermsAt: data.acceptedTermsAt || null,
         acceptedTermsVersion: data.acceptedTermsVersion || null,
         ageVerifiedAt: data.ageVerifiedAt || null,
@@ -114,6 +115,7 @@ const defaultDb = {
     ],
     notifications: [],
     messages: [],
+    reports: [],
     communityMessages: {
         "cloud-makers": [
             {
@@ -138,6 +140,7 @@ function normalizeDbState(db) {
     db.badges = Array.isArray(db.badges) ? db.badges : JSON.parse(JSON.stringify(defaultDb.badges));
     db.notifications = Array.isArray(db.notifications) ? db.notifications : [];
     db.messages = Array.isArray(db.messages) ? db.messages : [];
+    db.reports = Array.isArray(db.reports) ? db.reports : [];
     db.posts = Array.isArray(db.posts) ? db.posts : [];
     db.communityMessages = typeof db.communityMessages === "object" && db.communityMessages !== null
         ? db.communityMessages
@@ -203,6 +206,7 @@ function normalizeDbState(db) {
         badgeIds: Array.isArray(account.badgeIds) ? account.badgeIds : [],
         followers: Array.isArray(account.followers) ? [...new Set(account.followers.filter(Boolean))] : [],
         following: Array.isArray(account.following) ? [...new Set(account.following.filter(Boolean))] : [],
+        blockedAccounts: Array.isArray(account.blockedAccounts) ? [...new Set(account.blockedAccounts.filter(Boolean))] : [],
         acceptedTermsAt: account.acceptedTermsAt || (account.owner ? new Date().toISOString() : null),
         acceptedTermsVersion: account.acceptedTermsVersion || (account.owner ? TERMS_VERSION : null),
         ageVerifiedAt: account.ageVerifiedAt || (account.owner ? new Date().toISOString() : null),
@@ -386,6 +390,13 @@ async function ensurePostgresSchema(client) {
             PRIMARY KEY (follower_id, followed_id)
         );
 
+        CREATE TABLE IF NOT EXISTS account_blocks (
+            blocker_id TEXT NOT NULL,
+            blocked_id TEXT NOT NULL,
+            sort_index INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (blocker_id, blocked_id)
+        );
+
         CREATE TABLE IF NOT EXISTS communities (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -470,6 +481,18 @@ async function ensurePostgresSchema(client) {
             key TEXT PRIMARY KEY,
             value_json JSONB NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS reports (
+            id TEXT PRIMARY KEY,
+            reporter_id TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            details TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at_text TEXT NOT NULL,
+            sort_index INTEGER NOT NULL DEFAULT 0
+        );
     `);
 
     await client.query(`
@@ -498,12 +521,14 @@ async function syncStateToPostgres(client, db) {
         await client.query(`
             DELETE FROM account_badges;
             DELETE FROM account_follows;
+            DELETE FROM account_blocks;
             DELETE FROM community_members;
             DELETE FROM community_messages;
             DELETE FROM post_likes;
             DELETE FROM post_comments;
             DELETE FROM notifications;
             DELETE FROM direct_messages;
+            DELETE FROM reports;
             DELETE FROM sessions;
             DELETE FROM posts;
             DELETE FROM communities;
@@ -546,6 +571,13 @@ async function syncStateToPostgres(client, db) {
                 await client.query(
                     "INSERT INTO account_follows (follower_id, followed_id, sort_index) VALUES ($1, $2, $3)",
                     [account.id, followedId, followIndex],
+                );
+            }
+
+            for (const [blockIndex, blockedId] of (account.blockedAccounts || []).entries()) {
+                await client.query(
+                    "INSERT INTO account_blocks (blocker_id, blocked_id, sort_index) VALUES ($1, $2, $3)",
+                    [account.id, blockedId, blockIndex],
                 );
             }
         }
@@ -697,6 +729,25 @@ async function syncStateToPostgres(client, db) {
             ]);
         }
 
+        for (const [index, report] of (db.reports || []).entries()) {
+            await client.query(`
+                INSERT INTO reports (
+                    id, reporter_id, target_type, target_id, reason, details,
+                    status, created_at_text, sort_index
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            `, [
+                report.id,
+                report.reporterId,
+                report.targetType,
+                report.targetId,
+                report.reason,
+                report.details,
+                report.status,
+                report.createdAt,
+                index,
+            ]);
+        }
+
         for (const session of (db.sessions || [])) {
             await client.query(
                 "INSERT INTO sessions (token, account_id, created_at) VALUES ($1, $2, $3)",
@@ -722,6 +773,7 @@ async function readStateFromPostgres(client) {
         badgeResult,
         accountBadgeResult,
         accountFollowResult,
+        accountBlockResult,
         communityResult,
         communityMemberResult,
         communityMessageResult,
@@ -730,6 +782,7 @@ async function readStateFromPostgres(client) {
         postCommentResult,
         notificationResult,
         directMessageResult,
+        reportResult,
         sessionResult,
         metaResult,
     ] = await Promise.all([
@@ -737,6 +790,7 @@ async function readStateFromPostgres(client) {
         client.query("SELECT * FROM badges ORDER BY sort_index ASC, id ASC"),
         client.query("SELECT * FROM account_badges ORDER BY account_id ASC, sort_index ASC, badge_id ASC"),
         client.query("SELECT * FROM account_follows ORDER BY follower_id ASC, sort_index ASC, followed_id ASC"),
+        client.query("SELECT * FROM account_blocks ORDER BY blocker_id ASC, sort_index ASC, blocked_id ASC"),
         client.query("SELECT * FROM communities ORDER BY sort_index ASC, id ASC"),
         client.query("SELECT * FROM community_members"),
         client.query("SELECT * FROM community_messages ORDER BY community_id ASC, sort_index ASC, id ASC"),
@@ -745,6 +799,7 @@ async function readStateFromPostgres(client) {
         client.query("SELECT * FROM post_comments ORDER BY post_id ASC, sort_index ASC, id ASC"),
         client.query("SELECT * FROM notifications ORDER BY sort_index ASC, id ASC"),
         client.query("SELECT * FROM direct_messages ORDER BY sort_index ASC, id ASC"),
+        client.query("SELECT * FROM reports ORDER BY sort_index ASC, id ASC"),
         client.query("SELECT * FROM sessions ORDER BY created_at ASC, token ASC"),
         client.query("SELECT * FROM app_meta"),
     ]);
@@ -760,6 +815,7 @@ async function readStateFromPostgres(client) {
         badgeIds: [],
         followers: [],
         following: [],
+        blockedAccounts: [],
         acceptedTermsAt: row.accepted_terms_at,
         acceptedTermsVersion: row.accepted_terms_version,
         ageVerifiedAt: row.age_verified_at,
@@ -790,6 +846,13 @@ async function readStateFromPostgres(client) {
         }
         if (followed) {
             followed.followers.push(row.follower_id);
+        }
+    });
+
+    accountBlockResult.rows.forEach((row) => {
+        const blocker = accountsById.get(row.blocker_id);
+        if (blocker) {
+            blocker.blockedAccounts.push(row.blocked_id);
         }
     });
 
@@ -903,6 +966,17 @@ async function readStateFromPostgres(client) {
         time: row.time_text,
     }));
 
+    const reports = reportResult.rows.map((row) => ({
+        id: row.id,
+        reporterId: row.reporter_id,
+        targetType: row.target_type,
+        targetId: row.target_id,
+        reason: row.reason,
+        details: row.details,
+        status: row.status,
+        createdAt: row.created_at_text,
+    }));
+
     const sessions = sessionResult.rows.map((row) => ({
         token: row.token,
         accountId: row.account_id,
@@ -921,6 +995,7 @@ async function readStateFromPostgres(client) {
         posts,
         notifications,
         messages,
+        reports,
         sessions,
         liveNotificationIndex,
     };
@@ -1048,19 +1123,33 @@ function isAutoNotification(notification) {
 }
 
 function buildClientState(db, viewerId = "") {
+    const viewer = viewerId ? db.accounts.find((account) => account.id === viewerId) : null;
+    const blockedIds = new Set(viewer?.blockedAccounts || []);
     const visibleMessages = viewerId
-        ? (db.messages || []).filter((message) => message.senderId === viewerId || message.recipientId === viewerId)
+        ? (db.messages || []).filter((message) => (
+            (message.senderId === viewerId || message.recipientId === viewerId)
+            && !blockedIds.has(message.senderId)
+            && !blockedIds.has(message.recipientId)
+        ))
         : [];
     const visibleNotifications = viewerId
         ? (db.notifications || []).filter((notification) => !notification.recipientId || notification.recipientId === viewerId)
         : (db.notifications || []);
+    const visiblePosts = viewerId
+        ? (db.posts || [])
+            .filter((post) => !blockedIds.has(post.authorId))
+            .map((post) => ({
+                ...post,
+                comments: (post.comments || []).filter((comment) => !blockedIds.has(comment.authorId)),
+            }))
+        : (db.posts || []);
 
     return {
         accounts: db.accounts.map(sanitizeAccount),
         badges: db.badges,
         communities: db.communities,
         communityMessages: db.communityMessages,
-        posts: db.posts,
+        posts: visiblePosts,
         notifications: visibleNotifications,
         messages: visibleMessages,
         liveNotificationIndex: db.liveNotificationIndex,
@@ -1150,6 +1239,7 @@ function buildAdminState(db) {
             ...sanitizeAccount(account),
             activeSessionCount: db.sessions.filter((session) => session.accountId === account.id).length,
         })),
+        reports: db.reports || [],
     };
 }
 
@@ -1408,6 +1498,94 @@ app.post("/api/accounts/:id/follow", requireAuth, async (req, res) => {
 
     await writeDb(req.db);
     return res.json(buildClientState(req.db, req.account.id));
+});
+
+app.post("/api/accounts/:id/block", requireAuth, async (req, res) => {
+    const target = req.db.accounts.find((entry) => entry.id === req.params.id);
+
+    if (!target) {
+        return res.status(404).json({ error: "Account not found." });
+    }
+
+    if (target.id === req.account.id) {
+        return res.status(400).json({ error: "You cannot block your own account." });
+    }
+
+    req.account.blockedAccounts = Array.isArray(req.account.blockedAccounts) ? req.account.blockedAccounts : [];
+    req.account.following = Array.isArray(req.account.following) ? req.account.following : [];
+    req.account.followers = Array.isArray(req.account.followers) ? req.account.followers : [];
+    target.following = Array.isArray(target.following) ? target.following : [];
+    target.followers = Array.isArray(target.followers) ? target.followers : [];
+
+    if (req.account.blockedAccounts.includes(target.id)) {
+        req.account.blockedAccounts = req.account.blockedAccounts.filter((accountId) => accountId !== target.id);
+    } else {
+        req.account.blockedAccounts.unshift(target.id);
+        req.account.following = req.account.following.filter((accountId) => accountId !== target.id);
+        req.account.followers = req.account.followers.filter((accountId) => accountId !== target.id);
+        target.following = target.following.filter((accountId) => accountId !== req.account.id);
+        target.followers = target.followers.filter((accountId) => accountId !== req.account.id);
+    }
+
+    await writeDb(req.db);
+    return res.json(buildClientState(req.db, req.account.id));
+});
+
+app.post("/api/reports", requireAuth, async (req, res) => {
+    const targetType = String(req.body?.targetType || "").trim();
+    const targetId = String(req.body?.targetId || "").trim();
+    const reason = String(req.body?.reason || "").trim();
+    const details = String(req.body?.details || "").trim();
+
+    if (!["account", "post"].includes(targetType)) {
+        return res.status(400).json({ error: "Invalid report target." });
+    }
+
+    if (!targetId || !reason) {
+        return res.status(400).json({ error: "Report target and reason are required." });
+    }
+
+    const targetExists = targetType === "account"
+        ? req.db.accounts.some((account) => account.id === targetId)
+        : req.db.posts.some((post) => post.id === targetId);
+
+    if (!targetExists) {
+        return res.status(404).json({ error: "Reported item not found." });
+    }
+
+    req.db.reports.unshift({
+        id: `report-${Date.now()}`,
+        reporterId: req.account.id,
+        targetType,
+        targetId,
+        reason,
+        details,
+        status: "open",
+        createdAt: "Just now",
+    });
+
+    await writeDb(req.db);
+    return res.status(201).json({
+        state: buildClientState(req.db, req.account.id),
+        admin: isAdminAccount(req.account) ? buildAdminState(req.db) : null,
+    });
+});
+
+app.post("/api/admin/reports/:id/status", requireAuth, requireAdmin, async (req, res) => {
+    const report = (req.db.reports || []).find((entry) => entry.id === req.params.id);
+    const status = String(req.body?.status || "").trim().toLowerCase();
+
+    if (!report) {
+        return res.status(404).json({ error: "Report not found." });
+    }
+
+    if (!["open", "reviewed", "resolved"].includes(status)) {
+        return res.status(400).json({ error: "Invalid report status." });
+    }
+
+    report.status = status;
+    await writeDb(req.db);
+    return res.json(buildAdminState(req.db));
 });
 
 app.post("/api/communities", requireAuth, async (req, res) => {

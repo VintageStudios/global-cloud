@@ -296,6 +296,10 @@ function hasPostgresConfig() {
     return Boolean(process.env.DATABASE_URL);
 }
 
+function getStorageBackendName() {
+    return hasPostgresConfig() ? "postgres" : "sqlite";
+}
+
 function getPostgresPool() {
     if (!hasPostgresConfig()) {
         return null;
@@ -1120,6 +1124,13 @@ app.use((req, res, next) => {
 });
 app.use(express.static(__dirname));
 
+app.get("/api/health/storage", async (req, res) => {
+    return res.json({
+        backend: getStorageBackendName(),
+        hasDatabaseUrl: hasPostgresConfig(),
+    });
+});
+
 app.post("/api/auth/register", async (req, res) => {
     const db = await readDb();
     const { name, email, password, bio, acceptedTerms, birthDate, acceptedAge13Plus } = req.body;
@@ -1530,5 +1541,6 @@ app.post("/api/notifications/clear", requireAuth, async (req, res) => {
 
 app.listen(PORT, async () => {
     await ensureDb();
+    console.log(`Storage backend: ${getStorageBackendName()}`);
     console.log(`Global Cloud server running at http://localhost:${PORT}`);
 });

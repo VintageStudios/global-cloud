@@ -1207,6 +1207,20 @@ textarea {
     margin-bottom: 10px;
 }
 
+.account-item-body {
+    display: grid;
+    gap: 8px;
+    width: 100%;
+}
+
+.account-item-foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
 .community-item-foot {
     margin-top: 12px;
 }

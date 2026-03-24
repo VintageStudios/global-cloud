@@ -257,23 +257,31 @@ function renderAccounts() {
         return;
     }
 
-    const item = document.createElement("article");
-    item.className = "account-item";
-    item.innerHTML = `
-        <div class="account-item-head">
-            <div class="account-avatar">${escapeHtml(initialsFor(active.name))}</div>
-            <div>
-                <div class="name-row">
-                    <h4>${escapeHtml(active.name)}</h4>
-                    ${accountBadgeMarkup(active)}
+    appState.accounts.forEach((account) => {
+        const isActive = account.id === active.id;
+        const following = active.following?.includes(account.id);
+        const item = document.createElement("article");
+        item.className = "account-item";
+        item.innerHTML = `
+            <div class="account-item-head">
+                <div class="account-avatar">${escapeHtml(initialsFor(account.name))}</div>
+                <div class="account-item-body">
+                    <div class="name-row">
+                        <h4>${escapeHtml(account.name)}</h4>
+                        ${accountBadgeMarkup(account)}
+                    </div>
+                    <p>${escapeHtml(account.email)}</p>
+                    <p>${escapeHtml(account.bio)}</p>
+                    <div class="account-item-foot">
+                        <span class="pill">${account.joinedCommunities.length} joined</span>
+                        <span class="pill">${account.followers?.length || 0} followers</span>
+                        ${isActive ? '<span class="pill">You</span>' : `<button class="toggle-btn ${following ? "active" : ""}" data-follow-account="${account.id}" type="button">${following ? "Following" : "Follow"}</button>`}
+                    </div>
                 </div>
-                <p>${escapeHtml(active.email)}</p>
-                <p>${escapeHtml(active.bio)}</p>
-                <span class="pill">${active.joinedCommunities.length} joined</span>
             </div>
-        </div>
-    `;
-    els.accountList.appendChild(item);
+        `;
+        els.accountList.appendChild(item);
+    });
 }
 
 function badgeColorClass(color) {
@@ -916,6 +924,26 @@ async function handleCommunityActions(event) {
     }
 }
 
+async function handleAccountActions(event) {
+    const followButton = event.target.closest("[data-follow-account]");
+    if (!followButton) {
+        return;
+    }
+
+    try {
+        const state = await api(`/api/accounts/${followButton.dataset.followAccount}/follow`, {
+            method: "POST",
+            body: JSON.stringify({}),
+        });
+        syncState(state);
+        renderAccounts();
+        renderNotifications();
+        showToast("Follow updated", "Your follow list was updated.");
+    } catch (error) {
+        showToast("Follow failed", error.message);
+    }
+}
+
 async function handleFeedActions(event) {
     const likeButton = event.target.closest("[data-like-post]");
     if (likeButton) {
@@ -1104,6 +1132,7 @@ els.messageForm.addEventListener("submit", handleDirectMessageSubmit);
 els.postContent.addEventListener("input", updateCounts);
 els.notificationBell.addEventListener("click", handleClearNotifications);
 els.adminAccountList.addEventListener("click", handleAdminActions);
+els.accountList.addEventListener("click", handleAccountActions);
 els.communityList.addEventListener("click", handleCommunityActions);
 els.feedList.addEventListener("click", handleFeedActions);
 els.feedList.addEventListener("submit", handleCommentSubmit);

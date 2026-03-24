@@ -50,6 +50,8 @@ function baseAccount(data) {
         verified: data.verified,
         joinedCommunities: data.joinedCommunities,
         badgeIds: data.badgeIds || [],
+        followers: data.followers || [],
+        following: data.following || [],
         acceptedTermsAt: data.acceptedTermsAt || null,
         acceptedTermsVersion: data.acceptedTermsVersion || null,
         ageVerifiedAt: data.ageVerifiedAt || null,
@@ -70,6 +72,8 @@ const defaultDb = {
             verified: true,
             joinedCommunities: ["cloud-makers"],
             badgeIds: ["founder", "verified-owner"],
+            followers: [],
+            following: [],
             acceptedTermsAt: new Date().toISOString(),
             acceptedTermsVersion: TERMS_VERSION,
             ageVerifiedAt: new Date().toISOString(),
@@ -168,6 +172,10 @@ function normalizeDbState(db) {
     const previousNotificationCount = db.notifications.length;
     db.notifications = db.notifications.filter((notification) => !isAutoNotification(notification));
     changed = changed || db.notifications.length !== previousNotificationCount;
+    db.notifications = db.notifications.map((notification) => ({
+        ...notification,
+        recipientId: notification.recipientId || null,
+    }));
 
     db.accounts = (db.accounts || []).map((account) => {
         if (account.passwordHash) {
@@ -193,6 +201,8 @@ function normalizeDbState(db) {
         ...account,
         joinedCommunities: (account.joinedCommunities || []).filter((communityId) => !DEMO_COMMUNITY_IDS.has(communityId)),
         badgeIds: Array.isArray(account.badgeIds) ? account.badgeIds : [],
+        followers: Array.isArray(account.followers) ? [...new Set(account.followers.filter(Boolean))] : [],
+        following: Array.isArray(account.following) ? [...new Set(account.following.filter(Boolean))] : [],
         acceptedTermsAt: account.acceptedTermsAt || (account.owner ? new Date().toISOString() : null),
         acceptedTermsVersion: account.acceptedTermsVersion || (account.owner ? TERMS_VERSION : null),
         ageVerifiedAt: account.ageVerifiedAt || (account.owner ? new Date().toISOString() : null),
@@ -369,6 +379,13 @@ async function ensurePostgresSchema(client) {
             PRIMARY KEY (account_id, badge_id)
         );
 
+        CREATE TABLE IF NOT EXISTS account_follows (
+            follower_id TEXT NOT NULL,
+            followed_id TEXT NOT NULL,
+            sort_index INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (follower_id, followed_id)
+        );
+
         CREATE TABLE IF NOT EXISTS communities (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -430,6 +447,7 @@ async function ensurePostgresSchema(client) {
             body TEXT NOT NULL,
             time_text TEXT NOT NULL,
             unread BOOLEAN NOT NULL DEFAULT TRUE,
+            recipient_id TEXT,
             sort_index INTEGER NOT NULL DEFAULT 0
         );
 
@@ -459,6 +477,7 @@ async function ensurePostgresSchema(client) {
         ALTER TABLE posts ADD COLUMN IF NOT EXISTS reply_count INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE community_members ADD COLUMN IF NOT EXISTS community_sort_index INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE community_members ADD COLUMN IF NOT EXISTS account_sort_index INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE notifications ADD COLUMN IF NOT EXISTS recipient_id TEXT;
     `);
 }
 
@@ -478,6 +497,7 @@ async function syncStateToPostgres(client, db) {
     try {
         await client.query(`
             DELETE FROM account_badges;
+            DELETE FROM account_follows;
             DELETE FROM community_members;
             DELETE FROM community_messages;
             DELETE FROM post_likes;
@@ -519,6 +539,13 @@ async function syncStateToPostgres(client, db) {
                 await client.query(
                     "INSERT INTO account_badges (account_id, badge_id, sort_index) VALUES ($1, $2, $3)",
                     [account.id, badgeId, badgeIndex],
+                );
+            }
+
+            for (const [followIndex, followedId] of (account.following || []).entries()) {
+                await client.query(
+                    "INSERT INTO account_follows (follower_id, followed_id, sort_index) VALUES ($1, $2, $3)",
+                    [account.id, followedId, followIndex],
                 );
             }
         }
@@ -643,14 +670,15 @@ async function syncStateToPostgres(client, db) {
 
         for (const [index, notification] of (db.notifications || []).entries()) {
             await client.query(`
-                INSERT INTO notifications (id, title, body, time_text, unread, sort_index)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                INSERT INTO notifications (id, title, body, time_text, unread, recipient_id, sort_index)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
             `, [
                 notification.id,
                 notification.title,
                 notification.body,
                 notification.time || "Just now",
                 Boolean(notification.unread),
+                notification.recipientId || null,
                 index,
             ]);
         }
@@ -693,6 +721,7 @@ async function readStateFromPostgres(client) {
         accountResult,
         badgeResult,
         accountBadgeResult,
+        accountFollowResult,
         communityResult,
         communityMemberResult,
         communityMessageResult,
@@ -707,6 +736,7 @@ async function readStateFromPostgres(client) {
         client.query("SELECT * FROM accounts ORDER BY sort_index ASC, id ASC"),
         client.query("SELECT * FROM badges ORDER BY sort_index ASC, id ASC"),
         client.query("SELECT * FROM account_badges ORDER BY account_id ASC, sort_index ASC, badge_id ASC"),
+        client.query("SELECT * FROM account_follows ORDER BY follower_id ASC, sort_index ASC, followed_id ASC"),
         client.query("SELECT * FROM communities ORDER BY sort_index ASC, id ASC"),
         client.query("SELECT * FROM community_members"),
         client.query("SELECT * FROM community_messages ORDER BY community_id ASC, sort_index ASC, id ASC"),
@@ -728,6 +758,8 @@ async function readStateFromPostgres(client) {
         verified: row.verified,
         joinedCommunities: [],
         badgeIds: [],
+        followers: [],
+        following: [],
         acceptedTermsAt: row.accepted_terms_at,
         acceptedTermsVersion: row.accepted_terms_version,
         ageVerifiedAt: row.age_verified_at,
@@ -747,6 +779,17 @@ async function readStateFromPostgres(client) {
         const account = accountsById.get(row.account_id);
         if (account) {
             account.badgeIds.push(row.badge_id);
+        }
+    });
+
+    accountFollowResult.rows.forEach((row) => {
+        const follower = accountsById.get(row.follower_id);
+        const followed = accountsById.get(row.followed_id);
+        if (follower) {
+            follower.following.push(row.followed_id);
+        }
+        if (followed) {
+            followed.followers.push(row.follower_id);
         }
     });
 
@@ -849,6 +892,7 @@ async function readStateFromPostgres(client) {
         body: row.body,
         time: row.time_text,
         unread: row.unread,
+        recipientId: row.recipient_id,
     }));
 
     const messages = directMessageResult.rows.map((row) => ({
@@ -977,6 +1021,18 @@ function addNotification(db, title, body, time = "Just now") {
         body,
         time,
         unread: true,
+        recipientId: null,
+    });
+}
+
+function addTargetedNotification(db, recipientId, title, body, time = "Just now") {
+    db.notifications.unshift({
+        id: `note-${Date.now()}-${recipientId}`,
+        title,
+        body,
+        time,
+        unread: true,
+        recipientId,
     });
 }
 
@@ -995,6 +1051,9 @@ function buildClientState(db, viewerId = "") {
     const visibleMessages = viewerId
         ? (db.messages || []).filter((message) => message.senderId === viewerId || message.recipientId === viewerId)
         : [];
+    const visibleNotifications = viewerId
+        ? (db.notifications || []).filter((notification) => !notification.recipientId || notification.recipientId === viewerId)
+        : (db.notifications || []);
 
     return {
         accounts: db.accounts.map(sanitizeAccount),
@@ -1002,7 +1061,7 @@ function buildClientState(db, viewerId = "") {
         communities: db.communities,
         communityMessages: db.communityMessages,
         posts: db.posts,
-        notifications: db.notifications,
+        notifications: visibleNotifications,
         messages: visibleMessages,
         liveNotificationIndex: db.liveNotificationIndex,
     };
@@ -1317,6 +1376,40 @@ app.get("/api/state", requireAuth, async (req, res) => {
     res.json(buildClientState(req.db, req.account.id));
 });
 
+app.post("/api/accounts/:id/follow", requireAuth, async (req, res) => {
+    const target = req.db.accounts.find((entry) => entry.id === req.params.id);
+
+    if (!target) {
+        return res.status(404).json({ error: "Account not found." });
+    }
+
+    if (target.id === req.account.id) {
+        return res.status(400).json({ error: "You cannot follow your own account." });
+    }
+
+    req.account.following = Array.isArray(req.account.following) ? req.account.following : [];
+    target.followers = Array.isArray(target.followers) ? target.followers : [];
+
+    if (req.account.following.includes(target.id)) {
+        req.account.following = req.account.following.filter((accountId) => accountId !== target.id);
+        target.followers = target.followers.filter((accountId) => accountId !== req.account.id);
+    } else {
+        req.account.following.unshift(target.id);
+        if (!target.followers.includes(req.account.id)) {
+            target.followers.unshift(req.account.id);
+        }
+        addTargetedNotification(
+            req.db,
+            target.id,
+            "New follower",
+            `${req.account.name} started following you.`,
+        );
+    }
+
+    await writeDb(req.db);
+    return res.json(buildClientState(req.db, req.account.id));
+});
+
 app.post("/api/communities", requireAuth, async (req, res) => {
     const db = req.db;
     const { name, topic, description } = req.body;
@@ -1449,6 +1542,14 @@ app.post("/api/posts", requireAuth, async (req, res) => {
         : "the global feed";
 
     addNotification(db, "Post published", `${req.account.name} shared a post to ${destination}.`);
+    (req.account.followers || []).forEach((followerId) => {
+        addTargetedNotification(
+            db,
+            followerId,
+            `New post from ${req.account.name}`,
+            `${req.account.name} shared a new update${communityId ? ` in ${destination}` : ""}.`,
+        );
+    });
     await writeDb(db);
     return res.status(201).json(buildClientState(db, req.account.id));
 });
@@ -1531,10 +1632,16 @@ app.post("/api/messages", requireAuth, async (req, res) => {
 });
 
 app.post("/api/notifications/clear", requireAuth, async (req, res) => {
-    req.db.notifications = req.db.notifications.map((notification) => ({
-        ...notification,
-        unread: false,
-    }));
+    req.db.notifications = req.db.notifications.map((notification) => {
+        if (!notification.recipientId || notification.recipientId === req.account.id) {
+            return {
+                ...notification,
+                unread: false,
+            };
+        }
+
+        return notification;
+    });
     await writeDb(req.db);
     return res.json(buildClientState(req.db, req.account.id));
 });

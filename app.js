@@ -316,7 +316,8 @@ function renderProfile() {
     }
 
     const communities = appState.communities.filter((community) => profile.joinedCommunities.includes(community.id));
-    const posts = appState.posts.filter((post) => post.authorId === profile.id).slice(0, 4);
+    const allPosts = appState.posts.filter((post) => post.authorId === profile.id);
+    const posts = allPosts.slice(0, 4);
     const badges = (profile.badgeIds || [])
         .map((badgeId) => appState.badges.find((badge) => badge.id === badgeId))
         .filter(Boolean);
@@ -346,8 +347,8 @@ function renderProfile() {
 
         <div class="profile-stats">
             <article class="profile-stat-card">
-                <strong>${posts.length}</strong>
-                <span>Recent posts</span>
+                <strong>${allPosts.length}</strong>
+                <span>Total posts</span>
             </article>
             <article class="profile-stat-card">
                 <strong>${profile.followers?.length || 0}</strong>
@@ -400,6 +401,25 @@ function renderProfile() {
                 </div>
             </section>
         </div>
+
+        ${isActive ? `
+            <section class="profile-card profile-editor-card">
+                <div class="section-head">
+                    <div>
+                        <p class="eyebrow">Edit Profile</p>
+                        <h4>Update your account</h4>
+                    </div>
+                    <span class="status-pill">Saved live</span>
+                </div>
+                <form class="stack-form profile-edit-form" data-profile-edit-form="self">
+                    <input name="name" type="text" maxlength="40" value="${escapeHtml(profile.name)}" placeholder="Display name">
+                    <input name="email" type="email" maxlength="120" value="${escapeHtml(profile.email)}" placeholder="Email address">
+                    <textarea name="bio" rows="4" maxlength="220" placeholder="Tell people about yourself">${escapeHtml(profile.bio || "")}</textarea>
+                    <input name="password" type="password" minlength="8" placeholder="New password (optional)">
+                    <button class="primary-btn" type="submit">Save Changes</button>
+                </form>
+            </section>
+        ` : ""}
     `;
 }
 
@@ -1218,6 +1238,40 @@ function handleProfileActions(event) {
     }
 }
 
+async function handleProfileSubmit(event) {
+    const form = event.target.closest("[data-profile-edit-form]");
+    if (!form) {
+        return;
+    }
+
+    event.preventDefault();
+
+    const formData = new FormData(form);
+    const payload = {
+        name: String(formData.get("name") || "").trim(),
+        email: String(formData.get("email") || "").trim(),
+        bio: String(formData.get("bio") || "").trim(),
+        password: String(formData.get("password") || ""),
+    };
+
+    try {
+        const result = await api("/api/account", {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+        });
+
+        syncState(result.state);
+        if (result.admin) {
+            syncAdminState(result.admin);
+        }
+        appState.activeAccountId = result.account.id;
+        renderAll();
+        showToast("Profile updated", "Your account changes were saved.");
+    } catch (error) {
+        showToast("Update failed", error.message);
+    }
+}
+
 async function handleCommentSubmit(event) {
     const form = event.target.closest("[data-comment-form]");
     if (!form) {
@@ -1403,6 +1457,7 @@ els.adminAccountList.addEventListener("click", handleAdminActions);
 els.adminReportList.addEventListener("click", handleAdminActions);
 els.accountList.addEventListener("click", handleAccountActions);
 els.profileContent.addEventListener("click", handleProfileActions);
+els.profileContent.addEventListener("submit", handleProfileSubmit);
 els.communityList.addEventListener("click", handleCommunityActions);
 els.feedList.addEventListener("click", handleFeedActions);
 els.feedList.addEventListener("submit", handleCommentSubmit);

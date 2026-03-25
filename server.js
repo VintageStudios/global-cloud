@@ -1375,6 +1375,44 @@ app.post("/api/auth/logout", requireAuth, async (req, res) => {
     return res.json({ success: true });
 });
 
+app.patch("/api/account", requireAuth, async (req, res) => {
+    const name = String(req.body?.name || "").trim();
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const bio = String(req.body?.bio || "").trim();
+    const password = String(req.body?.password || "");
+
+    if (!name || !email) {
+        return res.status(400).json({ error: "Display name and email are required." });
+    }
+
+    const duplicate = req.db.accounts.find((entry) => (
+        entry.id !== req.account.id && entry.email.toLowerCase() === email
+    ));
+    if (duplicate) {
+        return res.status(409).json({ error: "That email is already in use." });
+    }
+
+    req.account.name = name;
+    req.account.email = email;
+    req.account.bio = bio || "Global Cloud member.";
+
+    if (password) {
+        if (password.length < 8) {
+            return res.status(400).json({ error: "New password must be at least 8 characters long." });
+        }
+        req.account.passwordHash = hashPassword(password);
+    }
+
+    await writeDb(req.db);
+
+    const canAdmin = req.account.owner || (Array.isArray(req.account.badgeIds) && req.account.badgeIds.includes(ADMIN_BADGE_ID));
+    return res.json({
+        account: sanitizeAccount(req.account),
+        state: buildClientState(req.db, req.account.id),
+        admin: canAdmin ? buildAdminState(req.db) : null,
+    });
+});
+
 app.get("/api/admin/overview", requireAuth, requireAdmin, async (req, res) => {
     return res.json(buildAdminState(req.db));
 });

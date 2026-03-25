@@ -17,6 +17,7 @@ const appState = {
     admin: null,
     selectedChatCommunityId: "",
     selectedDirectAccountId: "",
+    selectedProfileAccountId: "",
 };
 
 const els = {
@@ -50,6 +51,7 @@ const els = {
     composerAccount: document.querySelector("#composer-account"),
     communitySummary: document.querySelector("#community-summary"),
     accountList: document.querySelector("#account-list"),
+    profileContent: document.querySelector("#profile-content"),
     adminPanel: document.querySelector("#admin-panel"),
     badgeForm: document.querySelector("#badge-form"),
     badgeName: document.querySelector("#badge-name"),
@@ -135,8 +137,23 @@ function getActiveAccount() {
     return appState.accounts.find((account) => account.id === appState.activeAccountId) || null;
 }
 
+function getSelectedProfileAccount() {
+    const fallbackId = appState.selectedProfileAccountId || appState.activeAccountId;
+    return appState.accounts.find((account) => account.id === fallbackId) || getActiveAccount();
+}
+
 function hasAdminAccess(account) {
     return Boolean(account && (account.owner || (account.badgeIds || []).includes(MODERATOR_BADGE_ID)));
+}
+
+function openProfile(accountId) {
+    if (!accountId) {
+        return;
+    }
+
+    appState.selectedProfileAccountId = accountId;
+    renderProfile();
+    document.querySelector("#profiles")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function syncState(serverState) {
@@ -277,6 +294,7 @@ function renderAccounts() {
                     <div class="account-item-foot">
                         <span class="pill">${account.joinedCommunities.length} joined</span>
                         <span class="pill">${account.followers?.length || 0} followers</span>
+                        <button class="ghost-btn" data-open-profile="${account.id}" type="button">View Profile</button>
                         ${isActive ? '<span class="pill">You</span>' : `<button class="toggle-btn ${following ? "active" : ""}" data-follow-account="${account.id}" type="button">${following ? "Following" : "Follow"}</button>`}
                         ${isActive ? "" : `<button class="ghost-btn" data-block-account="${account.id}" type="button">${blocked ? "Unblock" : "Block"}</button>`}
                         ${isActive ? "" : `<button class="ghost-btn" data-report-account="${account.id}" type="button">Report</button>`}
@@ -286,6 +304,103 @@ function renderAccounts() {
         `;
         els.accountList.appendChild(item);
     });
+}
+
+function renderProfile() {
+    const active = getActiveAccount();
+    const profile = getSelectedProfileAccount();
+
+    if (!profile) {
+        els.profileContent.innerHTML = '<div class="empty-state">Select an account to view the profile.</div>';
+        return;
+    }
+
+    const communities = appState.communities.filter((community) => profile.joinedCommunities.includes(community.id));
+    const posts = appState.posts.filter((post) => post.authorId === profile.id).slice(0, 4);
+    const badges = (profile.badgeIds || [])
+        .map((badgeId) => appState.badges.find((badge) => badge.id === badgeId))
+        .filter(Boolean);
+    const isActive = active?.id === profile.id;
+    const following = active?.following?.includes(profile.id);
+    const blocked = active?.blockedAccounts?.includes(profile.id);
+
+    els.profileContent.innerHTML = `
+        <div class="profile-hero">
+            <div class="profile-hero-main">
+                <div class="profile-avatar">${escapeHtml(initialsFor(profile.name))}</div>
+                <div class="profile-identity">
+                    <div class="profile-name-row">
+                        <h3>${escapeHtml(profile.name)}</h3>
+                        ${accountBadgeMarkup(profile)}
+                    </div>
+                    <p class="profile-handle">${escapeHtml(profile.email)}</p>
+                    <p class="profile-bio">${escapeHtml(profile.bio)}</p>
+                </div>
+            </div>
+            <div class="profile-actions">
+                ${isActive ? '<span class="status-pill">Your profile</span>' : `<button class="toggle-btn ${following ? "active" : ""}" data-follow-account="${profile.id}" type="button">${following ? "Following" : "Follow"}</button>`}
+                ${isActive ? "" : `<button class="ghost-btn" data-profile-message="${profile.id}" type="button">Message</button>`}
+                ${isActive ? "" : `<button class="ghost-btn" data-block-account="${profile.id}" type="button">${blocked ? "Unblock" : "Block"}</button>`}
+            </div>
+        </div>
+
+        <div class="profile-stats">
+            <article class="profile-stat-card">
+                <strong>${posts.length}</strong>
+                <span>Recent posts</span>
+            </article>
+            <article class="profile-stat-card">
+                <strong>${profile.followers?.length || 0}</strong>
+                <span>Followers</span>
+            </article>
+            <article class="profile-stat-card">
+                <strong>${profile.following?.length || 0}</strong>
+                <span>Following</span>
+            </article>
+            <article class="profile-stat-card">
+                <strong>${communities.length}</strong>
+                <span>Communities</span>
+            </article>
+        </div>
+
+        <div class="profile-grid">
+            <section class="profile-card">
+                <div class="section-head">
+                    <div>
+                        <p class="eyebrow">About</p>
+                        <h4>Member overview</h4>
+                    </div>
+                </div>
+                <div class="profile-details">
+                    <p><strong>Joined spaces:</strong> ${communities.length ? communities.map((community) => escapeHtml(community.name)).join(", ") : "No communities yet."}</p>
+                    <p><strong>Account role:</strong> ${profile.owner ? "Owner" : hasAdminAccess(profile) ? "Moderator" : "Member"}</p>
+                    <div class="badge-chip-row">
+                        ${badges.length ? badges.map((badge) => `<span class="badge-swatch ${badgeColorClass(badge.color)}">${escapeHtml(badge.name)}</span>`).join("") : '<span class="pill">No badges yet</span>'}
+                    </div>
+                </div>
+            </section>
+
+            <section class="profile-card">
+                <div class="section-head">
+                    <div>
+                        <p class="eyebrow">Posts</p>
+                        <h4>Recent activity</h4>
+                    </div>
+                </div>
+                <div class="profile-post-list">
+                    ${posts.length ? posts.map((post) => `
+                        <article class="profile-post-item">
+                            <div class="profile-post-top">
+                                <span class="pill">#${escapeHtml(post.tag.replace(/\s+/g, ""))}</span>
+                                <span class="profile-post-time">${escapeHtml(post.createdAt || "Just now")}</span>
+                            </div>
+                            <p>${escapeHtml(post.content)}</p>
+                        </article>
+                    `).join("") : '<div class="empty-state compact-empty">No posts from this member yet.</div>'}
+                </div>
+            </section>
+        </div>
+    `;
 }
 
 function badgeColorClass(color) {
@@ -515,7 +630,7 @@ function renderFeed() {
             <div class="post-head">
                 <div>
                     <div class="name-row">
-                        <h3>${escapeHtml(account?.name || "Unknown")}</h3>
+                        <button class="profile-link-btn" data-open-profile="${account?.id || ""}" type="button">${escapeHtml(account?.name || "Unknown")}</button>
                         ${account ? accountBadgeMarkup(account) : ""}
                     </div>
                     <p class="post-subtitle">
@@ -643,10 +758,15 @@ function renderMessages() {
 }
 
 function renderAll() {
+    if (!appState.accounts.some((account) => account.id === appState.selectedProfileAccountId)) {
+        appState.selectedProfileAccountId = appState.activeAccountId || "";
+    }
+
     renderSidebarIdentity();
     renderStats();
     renderCommunitySelect();
     renderAccounts();
+    renderProfile();
     renderBadges();
     renderAdminAccounts();
     renderAdminReports();
@@ -966,9 +1086,15 @@ async function handleCommunityActions(event) {
 }
 
 async function handleAccountActions(event) {
+    const profileButton = event.target.closest("[data-open-profile]");
     const followButton = event.target.closest("[data-follow-account]");
     const blockButton = event.target.closest("[data-block-account]");
     const reportButton = event.target.closest("[data-report-account]");
+
+    if (profileButton) {
+        openProfile(profileButton.dataset.openProfile);
+        return;
+    }
 
     try {
         if (followButton) {
@@ -1018,8 +1144,15 @@ async function handleAccountActions(event) {
 }
 
 async function handleFeedActions(event) {
+    const profileButton = event.target.closest("[data-open-profile]");
     const likeButton = event.target.closest("[data-like-post]");
     const reportButton = event.target.closest("[data-report-post]");
+
+    if (profileButton?.dataset.openProfile) {
+        openProfile(profileButton.dataset.openProfile);
+        return;
+    }
+
     if (likeButton) {
         try {
             const state = await api(`/api/posts/${likeButton.dataset.likePost}/like`, {
@@ -1057,6 +1190,31 @@ async function handleFeedActions(event) {
             showToast("Report failed", error.message);
             return;
         }
+    }
+}
+
+function handleProfileActions(event) {
+    const profileButton = event.target.closest("[data-open-profile]");
+    const messageButton = event.target.closest("[data-profile-message]");
+    const followButton = event.target.closest("[data-follow-account]");
+    const blockButton = event.target.closest("[data-block-account]");
+
+    if (profileButton?.dataset.openProfile) {
+        openProfile(profileButton.dataset.openProfile);
+        return;
+    }
+
+    if (messageButton?.dataset.profileMessage) {
+        appState.selectedDirectAccountId = messageButton.dataset.profileMessage;
+        renderDirectMessageOptions();
+        els.dmRecipientSelect.value = appState.selectedDirectAccountId;
+        renderMessages();
+        document.querySelector("#messages")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+    }
+
+    if (followButton || blockButton) {
+        handleAccountActions(event);
     }
 }
 
@@ -1244,6 +1402,7 @@ els.notificationBell.addEventListener("click", handleClearNotifications);
 els.adminAccountList.addEventListener("click", handleAdminActions);
 els.adminReportList.addEventListener("click", handleAdminActions);
 els.accountList.addEventListener("click", handleAccountActions);
+els.profileContent.addEventListener("click", handleProfileActions);
 els.communityList.addEventListener("click", handleCommunityActions);
 els.feedList.addEventListener("click", handleFeedActions);
 els.feedList.addEventListener("submit", handleCommentSubmit);

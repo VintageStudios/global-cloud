@@ -146,6 +146,17 @@ function hasAdminAccess(account) {
     return Boolean(account && (account.owner || (account.badgeIds || []).includes(MODERATOR_BADGE_ID)));
 }
 
+function isEditingField() {
+    const activeElement = document.activeElement;
+    if (!activeElement) {
+        return false;
+    }
+
+    return Boolean(activeElement.closest(
+        "input, textarea, select, [contenteditable='true'], .profile-edit-form, .comment-form, .composer-form, .stack-form, .chat-form",
+    ));
+}
+
 function openProfile(accountId) {
     if (!accountId) {
         return;
@@ -1406,6 +1417,10 @@ async function handleDirectMessageSubmit(event) {
 
 async function pollLiveState() {
     if (!authToken) {
+        return;
+    }
+
+    if (isEditingField()) {
         return;
     }
 

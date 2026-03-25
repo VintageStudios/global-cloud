@@ -128,6 +128,24 @@ function showToast(title, body) {
     }, 4200);
 }
 
+async function copyTextToClipboard(text) {
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+    }
+
+    const helper = document.createElement("textarea");
+    helper.value = text;
+    helper.setAttribute("readonly", "true");
+    helper.style.position = "fixed";
+    helper.style.opacity = "0";
+    document.body.appendChild(helper);
+    helper.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(helper);
+    return copied;
+}
+
 function setAuthMode(isLoggedIn) {
     els.authScreen.hidden = isLoggedIn;
     els.appShell.hidden = !isLoggedIn;
@@ -1353,7 +1371,13 @@ async function handleAdminActions(event) {
             });
             syncAdminState(result.admin);
             renderAdminAccounts();
-            showToast("Temporary password created", `New temporary password: ${result.temporaryPassword}`);
+            try {
+                await copyTextToClipboard(result.temporaryPassword);
+                showToast("Temporary password created", "The new temp password was copied to your clipboard.");
+            } catch (clipboardError) {
+                console.warn("Clipboard copy failed", clipboardError);
+                showToast("Temporary password created", `Copy this password manually: ${result.temporaryPassword}`);
+            }
             return;
         }
 
